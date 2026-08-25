@@ -1,0 +1,90 @@
+<!--
+  Author: MoyuZJ
+  Team: LinearTeam
+  Contact: linearteam@foxmail.com
+  Made by MoyuZJ in China with ♥
+-->
+
+<h2>自定义表情</h2>
+<% if (notice) { %><p class="notice"><%= notice %></p><% } %>
+
+<nav class="ac-tabs">
+  <a class="ac-tab<%= tab === 'text' ? ' active' : '' %>" href="/admin/advanced-comments/emoji?tab=text">颜文字</a>
+  <a class="ac-tab<%= tab === 'single' ? ' active' : '' %>" href="/admin/advanced-comments/emoji?tab=single">单个表情</a>
+  <a class="ac-tab<%= tab === 'album' ? ' active' : '' %>" href="/admin/advanced-comments/emoji?tab=album">专辑表情</a>
+</nav>
+
+<% if (tab === 'text') { %>
+  <form method="post" action="/admin/advanced-comments/emoji/text/add" class="ac-emoji-form">
+    <input name="name" placeholder="名称（选填）">
+    <input name="content" placeholder="颜文字内容，如 (￣▽￣)~*" required>
+    <button class="button button-mini" type="submit">添加颜文字</button>
+  </form>
+  <ul class="ac-emoji-list">
+    <% (texts || []).forEach(item => { %>
+      <li><code><%= item.content %></code>
+        <small><%= item.name %> · <%= item.id %></small>
+        <form method="post" action="/admin/advanced-comments/emoji/text/<%= item.id %>/delete" onsubmit="return confirm('删除该颜文字？')">
+          <button class="button button-mini danger" type="submit">删除</button>
+        </form>
+      </li>
+    <% }) %>
+    <% if (!(texts || []).length) { %><li class="ac-empty">尚未添加颜文字。</li><% } %>
+  </ul>
+<% } %>
+
+<% if (tab === 'single') { %>
+  <form method="post" action="/admin/advanced-comments/emoji/single/add" enctype="multipart/form-data" class="ac-emoji-form">
+    <input type="file" name="image" accept="image/*" required>
+    <input name="name" placeholder="表情配文" required>
+    <button class="button button-mini" type="submit">添加单个表情</button>
+  </form>
+  <ul class="ac-emoji-list ac-grid">
+    <% (singles || []).forEach(item => { %>
+      <li>
+        <img src="<%= item.url %>" alt="<%= item.name %>" class="ac-preview">
+        <small><%= item.name %> · <%= item.id %></small>
+        <form method="post" action="/admin/advanced-comments/emoji/single/<%= item.id %>/delete" onsubmit="return confirm('删除该表情？')">
+          <button class="button button-mini danger" type="submit">删除</button>
+        </form>
+      </li>
+    <% }) %>
+    <% if (!(singles || []).length) { %><li class="ac-empty">尚未添加单个表情。</li><% } %>
+  </ul>
+<% } %>
+
+<% if (tab === 'album') { %>
+  <form method="post" action="/admin/advanced-comments/emoji/album/add" enctype="multipart/form-data" class="ac-emoji-form" id="ac-album-form">
+    <label>封面图 <input type="file" name="cover" accept="image/*" required></label>
+    <input name="name" placeholder="专辑名称" required>
+    <input name="description" placeholder="专辑介绍（选填）">
+    <div id="ac-album-emojis">
+      <h4>表情（至少一张，每张需配文）</h4>
+      <div class="ac-album-row">
+        <input type="file" name="emoji_1" accept="image/*" required>
+        <input name="caption_emoji_1" placeholder="配文" required>
+      </div>
+    </div>
+    <button type="button" class="button button-mini" id="ac-add-emoji-row">+ 添加一张表情</button>
+    <button class="button button-mini" type="submit">创建专辑</button>
+  </form>
+
+  <div class="ac-albums">
+    <% (albums || []).forEach(album => { %>
+      <div class="ac-album-card">
+        <img src="<%= album.cover %>" alt="<%= album.name %>" class="ac-cover">
+        <strong><%= album.name %></strong>
+        <% if (album.description) { %><small><%= album.description %></small><% } %>
+        <div class="ac-album-emojis">
+          <% (album.emojis || []).forEach(emoji => { %>
+            <img src="<%= emoji.url %>" alt="<%= emoji.name %>" title="<%= emoji.name %> · <%= emoji.id %>">
+          <% }) %>
+        </div>
+        <form method="post" action="/admin/advanced-comments/emoji/album/<%= album.id %>/delete" onsubmit="return confirm('删除整张专辑？')">
+          <button class="button button-mini danger" type="submit">删除专辑</button>
+        </form>
+      </div>
+    <% }) %>
+    <% if (!(albums || []).length) { %><p class="ac-empty">尚未创建表情专辑。</p><% } %>
+  </div>
+<% } %>

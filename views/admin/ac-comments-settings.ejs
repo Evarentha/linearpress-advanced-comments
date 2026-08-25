@@ -1,0 +1,37 @@
+<!--
+  Author: MoyuZJ
+  Team: LinearTeam
+  Contact: linearteam@foxmail.com
+  Made by MoyuZJ in China with ♥
+-->
+
+<h2>高级评论设置</h2>
+<% if (notice) { %><p class="notice"><%= notice %></p><% } %>
+
+<form method="post" action="/admin/advanced-comments/settings" class="ac-settings">
+  <fieldset>
+    <legend>未登录评论限频（按 IP 独立，全站文章共用）</legend>
+    <label>最近 1 分钟内最多
+      <input type="number" name="perMinute" min="1" max="100" value="<%= config.perMinute %>"> 条
+    </label>
+    <label>最近 10 分钟内最多
+      <input type="number" name="perTenMinutes" min="1" max="100" value="<%= config.perTenMinutes %>"> 条
+    </label>
+    <label>最近 1 小时内最多
+      <input type="number" name="perHour" min="1" max="1000" value="<%= config.perHour %>"> 条
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>评论规则</legend>
+    <label class="switch-row"><input type="checkbox" name="rateLimitEnabled" <%= config.rateLimitEnabled ? 'checked' : '' %>> 启用限频</label>
+    <label class="switch-row"><input type="checkbox" name="requireName" <%= config.requireName ? 'checked' : '' %>> 未登录用户必须填写姓名</label>
+    <label class="switch-row"><input type="checkbox" name="markdownEnabled" <%= config.markdownEnabled ? 'checked' : '' %>> 启用 Markdown 渲染</label>
+    <label class="switch-row"><input type="checkbox" name="emojiEnabled" <%= config.emojiEnabled ? 'checked' : '' %>> 启用表情面板</label>
+    <label>评论最大字数（含 Markdown 字符）
+      <input type="number" name="maxLength" min="1" max="10000" value="<%= config.maxLength %>">
+    </label>
+  </fieldset>
+
+  <button class="button" type="submit">保存设置</button>
+</form>

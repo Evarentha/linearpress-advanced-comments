@@ -1,0 +1,14 @@
+{
+  "id": "advanced-comments",
+  "name": "高级评论系统",
+  "version": "1.0.0",
+  "description": "未登录评论限频与姓名、IP 归属地展示、Markdown 评论、字数统计与快捷表情/颜文字/自定义表情面板。",
+  "author": "LinearPress",
+  "type": "both",
+  "main": "index.ts",
+  "runtime": "cordis",
+  "permissions": ["advanced-comments:manage"],
+  "public": "public",
+  "styles": ["advanced-comments.css"],
+  "scripts": ["advanced-comments.js"]
+}

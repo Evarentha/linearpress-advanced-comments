@@ -1,0 +1,93 @@
+/*
+ * Author: MoyuZJ
+ * Team: LinearTeam
+ * Contact: linearteam@foxmail.com
+ * Made by MoyuZJ in China with ♥
+ */
+
+/* ============================================================
+   Advanced Comments —— 前台评论样式（扁平风格：无圆角、无 hover 动画）
+   ============================================================ */
+
+.ac-comments { margin-top: 28px; }
+.ac-error { background: #fff1f0; border: 1px solid #ffccc7; color: #cf1322; padding: 8px 12px; margin: 8px 0; }
+.ac-ip { display: inline-block; margin-left: 8px; padding: 1px 8px; font-size: 12px; color: #8c8c8c; background: #f5f5f5; border: 1px solid #e5e5e5; }
+.ac-comment { padding: 10px 0; border-bottom: 1px dashed #eee; }
+.ac-comment-body { margin-top: 6px; line-height: 1.7; word-break: break-word; }
+.ac-comment-body h1,.ac-comment-body h2,.ac-comment-body h3,.ac-comment-body h4 { margin: 10px 0 6px; }
+.ac-comment-body pre { background: #282c34; color: #e6e6e6; padding: 12px; overflow: auto; font-size: 13px; }
+.ac-comment-body code { background: #f0f0f0; padding: 1px 5px; font-family: monospace; }
+.ac-comment-body pre code { background: transparent; padding: 0; color: inherit; }
+.ac-comment-body blockquote { margin: 8px 0; padding: 6px 14px; border-left: 3px solid #ddd; color: #666; background: #fafafa; }
+.ac-comment-body a { color: #1677ff; }
+.ac-comment-body ul,.ac-comment-body ol { padding-left: 22px; margin: 6px 0; }
+.ac-comment-body img.ac-emoji-img,.ac-comment-body img.ac-md-img { max-width: 100%; vertical-align: middle; }
+.ac-comment-body img.ac-emoji-img { width: 26px; height: 26px; object-fit: contain; margin: 0 2px; }
+
+/* —— 评论表单 —— */
+.ac-comment-form .ac-name, .ac-comment-form .ac-email { width: 48%; margin-bottom: 8px; padding: 8px 10px; border: 1px solid #ddd; }
+.ac-comment-form .ac-email { float: right; }
+.ac-editor { position: relative; margin-bottom: 8px; border: 1px solid #ddd; overflow: hidden; }
+.ac-editor:focus-within { border-color: #1677ff; }
+.ac-textarea { width: 100%; min-height: 120px; border: 0; outline: none; padding: 10px 12px; resize: vertical; font: inherit; box-sizing: border-box; display: block; }
+.ac-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: #f7f8fa; border-top: 1px solid #eee; font-size: 13px; }
+.ac-emoji-btn { display: inline-flex; align-items: center; gap: 4px; background: #fff; border: 1px solid #ddd; padding: 3px 10px; cursor: pointer; font-size: 13px; color: #333; }
+.ac-toolbar-right { display: inline-flex; align-items: center; gap: 10px; }
+.ac-md-hint { color: #8c8c8c; font-size: 12px; letter-spacing: .3px; }
+.ac-char-count { color: #bfbfbf; font-size: 12px; font-variant-numeric: tabular-nums; }
+.ac-char-count.over { color: #cf1322; font-weight: 600; }
+
+/* —— 表情弹窗 ——（扁平：无圆角、无阴影，使用边框分层） */
+#ac-emoji-backdrop { position: fixed; inset: 0; z-index: 9990; background: rgba(0,0,0,.35); }
+.ac-emoji-panel { position: fixed; z-index: 9991; background: #fff; border: 1px solid #d9d9d9; display: flex; flex-direction: column; width: 400px; max-width: 94vw; max-height: 70vh; }
+.ac-emoji-top { flex: 0 0 auto; background: #f7f8fa; border-bottom: 1px solid #eee; }
+.ac-emoji-topbar { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid #eee; font-size: 13px; font-weight: 600; }
+.ac-emoji-close { border: 0; background: transparent; font-size: 16px; cursor: pointer; color: #666; line-height: 1; }
+.ac-emoji-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 6px 10px; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+.ac-emoji-tab { flex: 0 0 auto; border: 1px solid #d9d9d9; background: #fff; padding: 4px 10px; cursor: pointer; font-size: 13px; color: #595959; white-space: nowrap; }
+.ac-emoji-tab.active { background: #1677ff; border-color: #1677ff; color: #fff; }
+.ac-emoji-tab .ac-emoji-cover { width: 22px; height: 22px; object-fit: cover; margin-right: 4px; vertical-align: middle; }
+.ac-emoji-body { flex: 1 1 auto; overflow-y: auto; padding: 10px 12px; min-height: 180px; max-height: 46vh; -webkit-overflow-scrolling: touch; }
+.ac-emoji-select { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); gap: 6px; }
+.ac-emoji-item { border: 1px solid transparent; background: transparent; cursor: pointer; font-size: 22px; line-height: 1; padding: 4px; display: flex; align-items: center; justify-content: center; min-height: 34px; }
+.ac-emoji-item img { width: 34px; height: 34px; object-fit: contain; }
+.ac-emoji-item:active { border-color: #1677ff; background: #f0f7ff; }
+
+@media (max-width: 640px) {
+  .ac-emoji-panel { width: 100vw; max-width: 100vw; max-height: 58vh; left: 0 !important; right: 0 !important; }
+  .ac-emoji-body { max-height: 40vh; }
+}
+
+/* ============================================================
+   后台 —— 设置 & 表情管理（扁平风格）
+   ============================================================ */
+.ac-settings fieldset { border: 1px solid #e5e5e5; padding: 12px 16px; margin-bottom: 14px; }
+.ac-settings legend { font-weight: 600; padding: 0 6px; }
+.ac-settings label { display: block; margin: 8px 0; }
+.ac-settings input[type=number] { width: 80px; padding: 5px 8px; border: 1px solid #ddd; }
+.ac-settings .switch-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+
+.ac-tabs { display: flex; gap: 6px; border-bottom: 2px solid #eee; margin-bottom: 16px; }
+.ac-tab { padding: 8px 16px; text-decoration: none; color: #595959; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+.ac-tab.active { color: #1677ff; border-bottom-color: #1677ff; font-weight: 600; }
+.ac-emoji-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 12px; background: #fafafa; border: 1px solid #eee; margin-bottom: 16px; }
+.ac-emoji-form input[type=text], .ac-emoji-form input:not([type=file]):not([type=checkbox]) { padding: 7px 10px; border: 1px solid #ddd; }
+.ac-emoji-list { list-style: none; padding: 0; margin: 0; }
+.ac-emoji-list li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid #f0f0f0; }
+.ac-emoji-list li small { color: #999; }
+.ac-emoji-list li form { margin-left: auto; }
+.ac-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.ac-grid li { flex-direction: column; border: 1px solid #eee; padding: 12px; }
+.ac-grid li form { margin-left: 0; }
+.ac-preview { width: 64px; height: 64px; object-fit: contain; }
+.ac-empty { color: #999; font-style: italic; }
+.ac-albums { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.ac-album-card { border: 1px solid #eee; padding: 12px; background: #fff; }
+.ac-cover { width: 100%; height: 120px; object-fit: cover; }
+.ac-album-card strong { display: block; margin-top: 8px; }
+.ac-album-card small { color: #999; }
+.ac-album-emojis { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.ac-album-emojis img { width: 30px; height: 30px; object-fit: contain; }
+.ac-album-row { display: flex; gap: 8px; margin: 6px 0; }
+.ac-album-row input[type=file] { flex: 1 1 40%; }
+.ac-album-row input[type=text] { flex: 1 1 40%; }
