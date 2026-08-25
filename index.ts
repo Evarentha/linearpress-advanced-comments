@@ -35,6 +35,7 @@ const MAX_UPLOAD = 16 * 1024 * 1024;
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS ac_config (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS ac_comment_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ac_comment_log_ip_time ON ac_comment_log(ip, created_at);
 CREATE TABLE IF NOT EXISTS ac_comment_meta (comment_id INTEGER PRIMARY KEY, ip TEXT NOT NULL, location TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ac_ip_cache (ip TEXT PRIMARY KEY, location TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ac_text_emoji (id TEXT PRIMARY KEY, name TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -66,6 +67,14 @@ const messageOf = (error: unknown): string => (error instanceof Error ? error.me
 const param = (value: unknown): string => Array.isArray(value) ? String(value[0] ?? '') : String(value ?? '');
 const text = (value: unknown): string => String(value ?? '').trim();
 const fileUrl = (name: string): string => `/plugins/${PLUGIN_ID}/ac-files/${name}`;
+/** 页面处理器包装：失败时渲染 error 视图（与 Base wrap 语义一致）。 */
+const wrap = (fn: (req: Request, res: Response) => Promise<unknown> | unknown): RequestHandler => (req, res) => {
+  void Promise.resolve(fn(req, res)).catch((error) => res.status(500).render('error', { title: '服务器错误', message: messageOf(error) }));
+};
+/** JSON API 处理器包装：失败时返回 { ok:false }（与 Base JSON 约定一致）。 */
+const wrapJson = (fn: (req: Request, res: Response) => Promise<unknown> | unknown): RequestHandler => (req, res) => {
+  void Promise.resolve(fn(req, res)).catch((error) => res.status(500).json({ ok: false, message: messageOf(error) }));
+};
 
 function buildStore(singleRows: Array<{ id: string; name: string; image_path: string }>, textRows: Array<{ id: string; name: string; content: string }>, albumRows: Array<{ id: string; name: string; cover_path: string; description: string | null; created_at: string }>, albumEmojiRows: Array<{ id: string; album_id: string; image_path: string; name: string; position: number }>): EmojiStore {
   const urlById = new Map<string, string>();
@@ -199,6 +208,7 @@ export default async function advancedComments(ctx: Context): Promise<void> {
       if (isGuest) {
         await db.run('INSERT INTO ac_comment_log(ip,created_at) VALUES(?,?)', clientIp, now);
         await db.run('INSERT OR REPLACE INTO ac_comment_meta(comment_id,ip,location,created_at) VALUES(?,?,?,?)', comment.id, clientIp, location, now);
+        invalidateMetaCache();
       }
 
       const site = await ctx.config.get();
@@ -214,12 +224,24 @@ export default async function advancedComments(ctx: Context): Promise<void> {
 
   /* --------------------------------------------- site locals injection */
 
-  hooks.on('site:locals', async (locals: Record<string, unknown>) => {
-    let meta: Record<string, { ip: string; location: string }> = {};
+  // 评论归属地缓存：site:locals 每请求触发，全表查询以 TTL + 写入失效控制成本。
+  const META_TTL_MS = 15_000;
+  let metaCache: { at: number; data: Record<string, { ip: string; location: string }> } | null = null;
+  const invalidateMetaCache = (): void => { metaCache = null; };
+  const loadMeta = async (): Promise<Record<string, { ip: string; location: string }>> => {
+    if (metaCache && Date.now() - metaCache.at < META_TTL_MS) return metaCache.data;
+    let data: Record<string, { ip: string; location: string }> = {};
     try {
       const rows = await db.all<{ comment_id: number; ip: string; location: string }>('SELECT comment_id,ip,location FROM ac_comment_meta');
-      for (const row of rows) meta[row.comment_id] = { ip: row.ip, location: row.location };
-    } catch { meta = {}; }
+      // 产品设计：公开展示访客完整 IP 与归属地，促使游客注册登录。
+      for (const row of rows) data[row.comment_id] = { ip: row.ip, location: row.location };
+    } catch { data = {}; }
+    metaCache = { at: Date.now(), data };
+    return data;
+  };
+
+  hooks.on('site:locals', async (locals: Record<string, unknown>) => {
+    const meta = await loadMeta();
     return {
       ...locals,
       ac: {
@@ -380,16 +402,26 @@ export default async function advancedComments(ctx: Context): Promise<void> {
 
   /* ------------------------------------------------------- maintenance */
 
+  // 定时清理：限频日志保留 2 天（窗口最长 1 小时），IP 归属地缓存上限 5000 条。
+  ctx.effect(() => {
+    const timer = setInterval(() => {
+      void (async () => {
+        try {
+          const cutoff = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+          await db.run('DELETE FROM ac_comment_log WHERE created_at<?', cutoff);
+          const count = await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM ac_ip_cache');
+          if (Number(count?.n ?? 0) > 5000) await db.run('DELETE FROM ac_ip_cache WHERE rowid IN (SELECT rowid FROM ac_ip_cache ORDER BY rowid LIMIT ?)', Number(count!.n) - 5000);
+        } catch { /* 清理失败不影响主流程 */ }
+      })();
+    }, 60 * 60 * 1000);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  });
+
   ctx.logger.info('activated');
 }
 
-/* ------------------------------------------------------------- helpers */
 
-function wrap(fn: (req: Request, res: Response) => Promise<void> | void): RequestHandler {
-  return (req, res) => Promise.resolve(fn(req, res)).catch((error) => {
-    res.status(500).json({ ok: false, message: messageOf(error) });
-  });
-}
 
 /** 解析 multipart 请求体（文本字段 + 文件）。 */
 async function parseUpload(req: Request): Promise<{ fields: Record<string, string>; files: Array<{ name: string; filename: string; data: Buffer }> }> {
@@ -398,12 +430,15 @@ async function parseUpload(req: Request): Promise<{ fields: Record<string, strin
   return parseMultipart(body, contentType);
 }
 
+/** 允许上传的图片扩展名（禁止 .html/.svg 等可执行内容同源托管）。 */
+const IMAGE_EXT_WHITELIST = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+
 /** 校验并保存上传图片，返回存储文件名。 */
 async function saveImage(data: Buffer, filename: string): Promise<string> {
   if (!data.length) throw new Error('图片内容为空');
-  const ext = path.extname(filename).toLowerCase() || '.img';
-  const safe = ext.replace(/[^a-z0-9.]/gi, '').slice(0, 10) || '.img';
-  const name = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${safe}`;
+  const ext = path.extname(filename).toLowerCase();
+  if (!IMAGE_EXT_WHITELIST.has(ext)) throw new Error('仅支持 PNG/JPG/GIF/WebP 图片。');
+  const name = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
   await fs.writeFile(path.join(FILES_DIR, name), data, { flag: 'wx' });
   return name;
 }

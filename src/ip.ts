@@ -5,20 +5,26 @@
  * Made by MoyuZJ in China with ♥
  */
 
-/** 从请求中取客户端 IP：优先真实 IP 头，其次直接获取。 */
-export function detectClientIp(req: { headers?: Record<string, unknown>; ip?: string }): string {
-  const headers = req.headers ?? {};
-  const real = headers['x-real-ip'];
-  if (typeof real === 'string' && real.trim()) return real.trim();
-  const forwarded = headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    const first = forwarded.split(',')[0]?.trim();
-    if (first) return first;
+/**
+ * 从请求中取客户端 IP。
+ * 仅当站点显式开启 TRUST_PROXY=1（存在可信反向代理）时才信任 X-Real-IP / X-Forwarded-For，
+ * 否则一律使用 Express 解析的 socket 地址，防止伪造请求头绕过限频、污染归属地缓存。
+ */
+export function detectClientIp(req: { headers?: Record<string, unknown>; ip?: string; app?: { get(name: string): unknown } }): string {
+  const trusted = process.env.TRUST_PROXY === '1' || Boolean(req.app?.get?.('trust proxy'));
+  if (trusted) {
+    const headers = req.headers ?? {};
+    const real = headers['x-real-ip'];
+    if (typeof real === 'string' && real.trim()) return real.trim();
+    const forwarded = headers['x-forwarded-for'];
+    if (typeof forwarded === 'string' && forwarded.trim()) {
+      const first = forwarded.split(',')[0]?.trim();
+      if (first) return first;
+    }
   }
-  if (typeof forwarded === 'string') return forwarded;
-  if (req.ip) return req.ip;
-  return '0.0.0.0';
+  return req.ip ?? '0.0.0.0';
 }
+
 
 const UNKNOWN = '未知';
 

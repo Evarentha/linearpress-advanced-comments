@@ -20,6 +20,16 @@ export interface EmojiUrlResolver {
   (id: string): string | null;
 }
 
+/** 链接地址协议白名单：http/https/mailto 及相对地址；其余一律降级为 '#'。 */
+function safeUrl(url: string): string {
+  const value = String(url ?? '');
+  if (/^https?:\/\//i.test(value)) return value;
+  if (/^mailto:[^\s@]+@[^\s@]+$/i.test(value)) return value;
+  if (value.startsWith('/') || value.startsWith('#') || value.startsWith('./')) return value;
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(value)) return value; // 无协议的普通文本
+  return '#';
+}
+
 /** 单行内联处理：图片、链接、代码、加粗、斜体、删除线、emoji 令牌。 */
 function renderInline(raw: string, emojiUrl: EmojiUrlResolver | null): string {
   let text = escapeHtml(raw);
@@ -35,8 +45,10 @@ function renderInline(raw: string, emojiUrl: EmojiUrlResolver | null): string {
   text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<img class="ac-md-img" src="$2" alt="$1" loading="lazy">');
   // 行内代码 `code`
   text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // 链接 [text](url)
-  text = text.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  // 链接 [text](url)：仅允许 http/https/mailto 与站内相对地址，防止 javascript:/data: XSS
+  text = text.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, label: string, url: string) => {
+    return `<a href="${safeUrl(url)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
   // 加粗 **text** 或 __text__
   text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>');
