@@ -1,0 +1,26 @@
+{
+  "name": "@evarentha/linearpress-advanced-comments",
+  "version": "1.0.0",
+  "private": false,
+  "description": "未登录评论限频与姓名、IP 归属地展示、Markdown 评论、字数统计与快捷表情/颜文字/自定义表情面板。",
+  "type": "module",
+  "main": "index.ts",
+  "files": [
+    "index.ts",
+    "plugin.json",
+    "src",
+    "views",
+    "public",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "linearpress",
+    "plugin",
+    "advanced-comments"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
