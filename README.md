@@ -36,7 +36,7 @@ LinearPress 的评论增强插件：**Markdown 评论、限频与姓名约束、
 cd base && sh scripts/sync-plugins.sh advanced-comments
 
 # Option 2 — clone into runtime dir（目录名必须等于插件 id）
-git clone https://github.com/Averithen/linearpress-advanced-comments src/plugins/advanced-comments
+git clone https://github.com/Evarentha/linearpress-advanced-comments src/plugins/advanced-comments
 ```
 
 ## Admin / 后台
@@ -48,7 +48,7 @@ git clone https://github.com/Averithen/linearpress-advanced-comments src/plugins
 ## Local Development / 本地开发：怎么拉 / 怎么改 / 怎么跑
 
 ```bash
-git clone https://github.com/Averithen/linearpress-advanced-comments LinearPress/Plugins/advanced-comments
+git clone https://github.com/Evarentha/linearpress-advanced-comments LinearPress/Plugins/advanced-comments
 cd LinearPress/base
 npm install && npm run db:init
 sh scripts/sync-plugins.sh advanced-comments
