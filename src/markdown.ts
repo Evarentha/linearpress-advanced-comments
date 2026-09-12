@@ -1,8 +1,21 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Safe Markdown Comment Renderer
+ *
+ * Lightweight Markdown-to-HTML renderer for comment content, XSS-safe by design.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/**
+ * Lightweight Markdown renderer supporting fenced code blocks, headings,
+ * blockquotes, unordered/ordered lists, horizontal rules, paragraphs, inline
+ * code, images, links, bold, italic, strikethrough, and :emoji:ID tokens.
+ * Input is HTML-escaped before any markup is applied, guaranteeing XSS safety.
+ * @since 1.0.0
  */
 
 /** 转义 HTML 特殊字符，防止 XSS。 */
@@ -67,12 +80,6 @@ function renderParagraph(lines: string[], emojiUrl: EmojiUrlResolver | null): st
   return `<p>${renderInline(joined, emojiUrl)}</p>`;
 }
 
-/**
- * 轻量 Markdown 渲染器。
- * 支持：围栏代码块、标题、引用、无序/有序列表、分隔线、段落、
- * 行内代码/图片/链接/加粗/斜体/删除线，以及 :emoji:ID 表情令牌。
- * 输出前先转义 HTML，保证 XSS 安全。
- */
 export function renderMarkdown(
   text: string,
   emojiUrl: EmojiUrlResolver | null = null

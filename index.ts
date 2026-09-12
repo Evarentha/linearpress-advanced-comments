@@ -1,8 +1,24 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Advanced Comments Plugin Entry
+ *
+ * Cordis plugin that upgrades the comment system with Markdown rendering,
+ * IP-based rate limiting and geolocation, and a custom emoji panel.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/**
+ * Registers the plugin's SQLite schema and persisted configuration, overrides
+ * the comment submission route for every permalink pattern, and exposes
+ * comment rendering helpers to the overridden post view. Guest comments are
+ * rate-limited per client IP and recorded with masked IPs and best-effort
+ * geolocation. Also provides the custom emoji subsystem (kaomoji, single
+ * images, albums) with admin management pages and a JSON API.
+ * @since 1.0.0
  */
 
 import type { Context } from 'cordis';
@@ -233,8 +249,9 @@ export default async function advancedComments(ctx: Context): Promise<void> {
     let data: Record<string, { ip: string; location: string }> = {};
     try {
       const rows = await db.all<{ comment_id: number; ip: string; location: string }>('SELECT comment_id,ip,location FROM ac_comment_meta');
-      // 产品设计：公开展示访客完整 IP 与归属地，促使游客注册登录。
-      for (const row of rows) data[row.comment_id] = { ip: row.ip, location: row.location };
+      // 隐私脱敏：前台仅展示部分 IP（IPv4 保留前两段 / IPv6 保留前两组），完整 IP 只存库不下发。
+      const maskIp = (ip: string): string => ip.replace(/^(\d{1,3}\.\d{1,3})\.\d{1,3}\.\d{1,3}$/, '$1.*.*').replace(/^([0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}):.+$/, '$1:*');
+      for (const row of rows) data[row.comment_id] = { ip: maskIp(row.ip), location: row.location };
     } catch { data = {}; }
     metaCache = { at: Date.now(), data };
     return data;

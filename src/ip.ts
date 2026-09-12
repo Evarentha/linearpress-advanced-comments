@@ -1,8 +1,22 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Client IP Detection and Geolocation
+ *
+ * Trust-aware client IP extraction and best-effort IP location lookup.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/**
+ * Detects the visitor's IP, trusting X-Real-IP / X-Forwarded-For only when a
+ * trusted reverse proxy is explicitly enabled so forged headers cannot bypass
+ * rate limiting or pollute the location cache. Resolves best-effort IP
+ * geolocation through a pluggable provider with a two-tier memory + SQLite
+ * cache, falling back to an "unknown" placeholder on failure.
+ * @since 1.0.0
  */
 
 /**

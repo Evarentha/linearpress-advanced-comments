@@ -1,8 +1,20 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Multipart Form-Data Parser
+ *
+ * Dependency-free multipart/form-data parsing for the plugin's admin uploads.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/**
+ * Minimal multipart/form-data parser handling text fields and binary files,
+ * sufficient for admin emoji images and album covers. Also provides a raw
+ * request-body reader that enforces an upload size limit.
+ * @since 1.0.0
  */
 
 export interface MultipartFile {
@@ -32,10 +44,6 @@ export async function readRawBody(req: AsyncIterable<Buffer | string>, maxSize: 
   return Buffer.concat(chunks);
 }
 
-/**
- * 简易 multipart/form-data 解析器（文本字段 + 二进制文件）。
- * 足以支撑后台表情图片与专辑封面的上传。
- */
 export function parseMultipart(body: Buffer, contentType: string): MultipartResult {
   const match = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
   if (!match) throw new Error('上传请求缺少 multipart boundary');

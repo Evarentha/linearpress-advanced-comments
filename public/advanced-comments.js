@@ -1,13 +1,24 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Advanced Comments Client Script
+ *
+ * Front-end comment form behavior plus admin emoji album editing helpers.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-/* ============================================================
-   Advanced Comments —— 前台字数统计、表情面板 & 后台专辑编辑
-   ============================================================ */
+/**
+ * Front end: live character counting with submit-time length validation, and
+ * a tabbed emoji picker panel (system emoji, custom singles, kaomoji,
+ * albums) that lazily fetches the emoji library from the plugin's JSON API
+ * and inserts tokens at the caret. Admin: dynamically adds captioned upload
+ * rows when building emoji albums.
+ * @since 1.0.0
+ */
+
 (() => {
 
   /* ---------- 系统默认 emoji（常见图标） ---------- */
@@ -152,7 +163,7 @@
       tabs.forEach((tab) => {
         let b = document.createElement('button');
         b.type = 'button'; b.className = 'ac-emoji-tab' + (tab.key === state.current ? ' active' : '');
-        if (tab.isImage) { b.innerHTML = '<img class="ac-emoji-cover" src="' + tab.cover + '" alt="">'; }
+        if (tab.isImage) { let coverImg = document.createElement('img'); coverImg.className = 'ac-emoji-cover'; coverImg.src = tab.cover; coverImg.alt = ''; b.appendChild(coverImg); }
         let label = document.createElement('span');
         label.textContent = tab.label;
         b.appendChild(label);

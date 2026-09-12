@@ -1,11 +1,23 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Advanced Comments Configuration
+ *
+ * Config shape, defaults, and normalization for the Advanced Comments plugin.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-/** 插件全局配置默认值。限频与字数均可通过后台设置页调整。 */
+/**
+ * Global plugin configuration defaults. Rate-limit windows and the maximum
+ * comment length are adjustable from the admin settings page; normalization
+ * falls back to the defaults whenever a stored or submitted value is missing
+ * or invalid.
+ * @since 1.0.0
+ */
+
 export interface AdvancedCommentsConfig {
   /** 未登录用户限频上限：最近 1 分钟允许的评论条数 */
   perMinute: number;

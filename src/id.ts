@@ -1,8 +1,20 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Prefixed Unique ID Generator
+ *
+ * Collision-checked random identifiers for the custom emoji records.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/**
+ * Builds record IDs from a caller-supplied prefix (TXT_, SIN_, COL_) plus a
+ * 6-character uppercase alphanumeric code, retrying with a fresh code when a
+ * candidate already exists in storage.
+ * @since 1.0.0
  */
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';

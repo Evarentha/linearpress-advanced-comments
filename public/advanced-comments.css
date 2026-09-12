@@ -1,8 +1,21 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Advanced Comments Stylesheet
+ *
+ * Flat-design styles for the comment area, emoji panel, and admin pages.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/*
+ * Covers the front-end comment area (comment bodies with Markdown elements,
+ * editor toolbar, character counter, responsive emoji picker) and the admin
+ * pages (settings form, emoji tabs, grids, album cards) in a flat style:
+ * no rounded corners, no hover animations, borders for layering.
+ * @since 1.0.0
  */
 
 /* ============================================================
