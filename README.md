@@ -1,73 +1,67 @@
-<!--
-  Author: MoyuZJ
-  Team: LinearTeam
-  Contact: linearteam@foxmail.com
-  Made by MoyuZJ in China with ♥
--->
+# Advanced Comments
 
-# 高级评论系统（advanced-comments）
+[![LinearPress](https://img.shields.io/badge/LinearPress-plugin-7C3AED.svg)](https://www.npmjs.com/package/@evarentha/linearpress) [![npm](https://img.shields.io/npm/v/@evarentha/linearpress-advanced-comments.svg)](https://www.npmjs.com/package/@evarentha/linearpress-advanced-comments) [![Node.js](https://img.shields.io/badge/node-%3E%3D22-green.svg)](https://nodejs.org) [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org) [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-LinearPress 的 Cordis 插件，为文章评论区提供 **Markdown 评论、限频与姓名约束、IP 归属地展示与表情面板**。
+**English** | [简体中文](README.zh-CN.md)
 
-> 本仓库是 LinearPress 插件 **advanced-comments** 的独立开发仓库。插件即 Cordis 插件函数，即插即用、可停用可卸载。
+`advanced-comments` rebuilds the comment area on LinearPress posts: rate limiting for guests across three windows, masked IPs with geolocation, safe Markdown, a live character counter, and an emoji system managed from the admin console. It's a type `both` plugin (server routes plus views and frontend assets) and needs no other plugin. It overrides the base post template (`views/web/post.ejs`) to draw the new comment area, and view overrides take priority over base templates.
 
-## 插件化的优势
+## What it does
 
-- **覆盖视图即可增强**：通过 `views/web/post.ejs` 覆盖文章页评论区，用 Hook 注入模板辅助（Markdown 渲染、限频状态、表情数据），核心评论路由与数据模型不动。
-- **可叠加限频策略**：核心自带「同 IP 10 分钟 20 条」基础限频，本插件在其上叠加更严格的多窗口策略，互不冲突。
-- **存储型 XSS 防护开箱即用**：Markdown 先转义后渲染；自定义表情只存 ID 引用，非富文本。
+Comments from visitors who are not logged in are limited by IP across three overlapping windows: 1 per minute, 3 per 10 minutes, and 5 per hour by default, all adjustable in settings. These limits stack on top of the base's own per-IP limit, and the two coexist without conflict. You can also decide whether guests must leave a name to comment.
 
-## 功能
+Guest comments show a partial IP (first two octets for IPv4, first two groups for IPv6) next to the resolved location. The full IP is stored server-side only and never sent to the browser. Locations are resolved through ip-api.com and cached at two levels, in memory and in a database table.
 
-- **未登录用户约束**：评论必须填写姓名；按 IP 限频（默认 1 条/分钟、3 条/10 分钟、5 条/小时，全站共用，后台可调）；评论自动展示 IP（`X-Real-IP` 优先）与归属地。
-- **Markdown 评论**：轻量安全渲染（标题/列表/引用/代码/链接/图片/加粗/斜体/删除线），字数默认上限 300，输入框右下角实时计数并标注 `M↓ Supported`。
-- **表情与符号**：评论框内置表情按钮，弹窗分区：单个表情 → emoji → 颜文字 → 自定义专辑；桌面滚轮/移动端触屏滑动。
-- **自定义表情导入**：插件卡片「自定义表情」进入管理页——颜文字（文本）、单个表情（图片+配文）、专辑表情（封面+多图）；ID 规则 `TXT_/SIN_/COL_<6位码>`。
+Comment text is HTML-escaped before any markup is applied, which rules out stored XSS. Link targets are whitelisted to http, https, mailto, and relative addresses; anything else degrades to `#`. Uploaded emoji images must be PNG, JPG, GIF, or WebP, so HTML, SVG, and other active content never gets hosted same-origin. Headings, lists, quotes, fenced code blocks, bold, italic, and strikethrough are all supported.
 
-## 安装
+The comment box shows a running count against the configured maximum, 300 by default. Counting is done in Unicode code points, so the browser counter and the server-side check always agree.
+
+A picker in the comment box offers a Unicode emoji panel, kaomoji, and custom images: single images with captions, or albums with covers and captions. For example, this comment uses the safe Markdown and an emoji token:
+
+```markdown
+**Key point** was already covered in [the previous chapter](https://example.com/prev), code as usual: `npm i linearpress`.
+Bookmarked :emoji:SIN_a1b2c3
+```
+
+The `:emoji:` token is replaced by the uploaded image at render time; IDs come from the emoji management page and use the prefixes shown there: `SIN_` for a single image, `TXT_` for kaomoji, and `COL_<album>_<position>` for an entry inside an album, for example `:emoji:COL_a1b2c3_2`.
+
+## Install
 
 ```bash
-# 方式一：工作区同步
-cd base && sh scripts/sync-plugins.sh advanced-comments
-
-# 方式二：克隆到运行目录（目录名必须等于插件 id）
-git clone <本仓库地址> src/plugins/advanced-comments
+git clone https://github.com/Evarentha/linearpress-advanced-comments.git src/plugins/advanced-comments
 ```
 
-重启 LinearPress 自动发现并启用；也可 ZIP/npm 安装。
+The directory name must equal the plugin id. Restart afterwards, or sync from the `base` checkout (`sh scripts/sync-plugins.sh advanced-comments`), or upload the ZIP / npm name from the admin Plugins page.
 
-## 后台
+Running behind a reverse proxy? Set `TRUST_PROXY=1` so visitor IPs are read from `X-Real-IP` / `X-Forwarded-For`. Without it the plugin falls back to the socket address.
 
-- 侧边栏「高级评论」→ 设置页（限频三值、姓名必填、Markdown 开关、字数上限、表情开关）
-- 插件卡片「自定义表情」→ 颜文字 / 单个表情 / 专辑表情管理
-- 管理路由需要 `advanced-comments:manage` 权限（超级管理员自动通过）
+## Settings
 
-## 本地开发：怎么拉 / 怎么改 / 怎么跑
+The settings page lives at `/admin/advanced-comments/settings` (admin sidebar entry "高级评论", Advanced Comments): rate limiting on/off and the three window values, whether guests must fill in a name, Markdown rendering on/off, the maximum comment length, and the emoji panel on/off. Custom emoji are managed at `/admin/advanced-comments/emoji`, with separate tabs for kaomoji, single images, and albums.
 
-```bash
-git clone <本仓库地址> LinearPress/Plugins/advanced-comments
-cd LinearPress/base
-npm install && npm run db:init
-sh scripts/sync-plugins.sh advanced-comments
-npm run dev
-```
+Both pages require `advanced-comments:manage`, which super administrators hold automatically. Settings are stored as JSON under the key `advanced-comments` in the plugin's own `ac_config` table in the business database.
 
-## 目录结构
+## How it plugs in
 
-```text
-advanced-comments/
-├── plugin.json               # Manifest（permissions: advanced-comments:manage）
-├── index.ts                  # 建表、覆盖评论提交路由、限频、IP 归属地、后台路由与菜单
-├── src/
-│   ├── config.ts / id.ts / ip.ts / markdown.ts / multipart.ts
-├── views/
-│   ├── web/post.ejs          # 覆盖文章页评论区（视图优先级最高）
-│   └── admin/                # 设置页、表情管理页
-└── public/                   # 字数统计、表情面板、后台专辑编辑交互
-```
+Comment submission (POST) is overridden on all six permalink shapes that carry comment endpoints; the seventh format, `/posts/:id`, has no comment endpoint in the base system either: `/posts/:slug/comments`, `/posts/:first/:slug/comments`, `/posts/:MM/:dd/:slug/comments`, `/posts/:yyyy/:MM/:dd/:slug/comments`, `/post-:slug-page.html/comments`, and `/post/:slug/comments`. `GET /api/advanced-comments/emoji` returns the emoji store for the frontend picker. The `site:locals` hook injects an `ac` helper object (config, comment metadata, Markdown renderer, emoji API path) for templates, and `admin:menu` adds the sidebar entry.
 
-## 贡献与发布
+An hourly job prunes the rate-limit log (kept for two days) and caps the IP cache at 5000 rows. colorful-profiles overrides the same post view but preserves this plugin's comment features and adds avatars, so the two work together.
 
-- conventional commits；提交前 `cd base && npm run typecheck`
-- 版本：`git tag v1.0.0 && git push --tags`
-- License：MIT（见仓库 LICENSE）
+## Tables
+
+All created in the business database:
+
+| Table | Purpose |
+| --- | --- |
+| `ac_config` | plugin settings (JSON) |
+| `ac_comment_log` | guest comment timestamps, the input for rate limiting |
+| `ac_comment_meta` | full IP and resolved location per comment (server-side only) |
+| `ac_ip_cache` | resolved geolocation per IP |
+| `ac_text_emoji` | kaomoji entries |
+| `ac_single_emoji` | custom single images |
+| `ac_album` | emoji albums (cover, caption) |
+| `ac_album_emoji` | images inside an album |
+
+## License
+
+GPL-3.0-or-later, Copyright (C) 2026 Evarentha. See LICENSE.
