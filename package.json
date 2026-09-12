@@ -1,0 +1,32 @@
+{
+  "name": "@evarentha/linearpress-advanced-comments",
+  "version": "3.0.0",
+  "description": "未登录评论限频与姓名、IP 归属地展示、Markdown 评论、字数统计与快捷表情/颜文字/自定义表情面板。",
+  "type": "module",
+  "main": "index.ts",
+  "license": "GPL-3.0-or-later",
+  "author": "MoyuZJ <moyuzj@moyuzj.cn> (https://moyuzj.cn)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Evarentha/linearpress-advanced-comments.git"
+  },
+  "keywords": [
+    "linearpress",
+    "plugin",
+    "evarentha",
+    "advanced-comments"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "peerDependencies": {
+    "linearpress": "^3.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/Evarentha/linearpress-advanced-comments#readme",
+  "bugs": {
+    "url": "https://github.com/Evarentha/linearpress-advanced-comments/issues"
+  }
+}
