@@ -1,4 +1,8 @@
 # 依赖与数据
+# Local documentation (kept on disk, not committed)
+doc/
+docs/
+
 node_modules/
 data/
 *.db
