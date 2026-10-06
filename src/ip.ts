@@ -5,6 +5,7 @@
  *
  * Authors:
  * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ * worryzu <worryzu@gmail.com> @LinearTeam
  *
  * Copyright (C) 2026 Evarentha
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -78,7 +79,7 @@ export async function resolveLocation(
   try {
     const row = await db.get<{ location: string }>('SELECT location FROM ac_ip_cache WHERE ip=?', ip);
     if (row?.location) {
-      memoryCache.set(ip, row.location);
+      cacheLocation(ip, row.location);
       return row.location;
     }
   } catch { /* ignore */ }
@@ -86,7 +87,7 @@ export async function resolveLocation(
   try {
     location = await provider(ip, timeoutMs);
   } catch { location = UNKNOWN; }
-  memoryCache.set(ip, location);
+  cacheLocation(ip, location);
   try {
     await db.run('INSERT OR REPLACE INTO ac_ip_cache(ip, location) VALUES(?,?)', ip, location);
   } catch { /* ignore */ }
@@ -103,3 +104,8 @@ export async function defaultProvider(ip: string, timeoutMs: number): Promise<st
 }
 
 const memoryCache = new Map<string, string>();
+function cacheLocation(ip: string, location: string): void {
+  // Bounded FIFO cache: a stream of distinct guest IPs cannot grow memory forever.
+  if (!memoryCache.has(ip) && memoryCache.size >= 2048) memoryCache.delete(memoryCache.keys().next().value!);
+  memoryCache.set(ip, location);
+}

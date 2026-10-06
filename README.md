@@ -4,11 +4,11 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-`advanced-comments` rebuilds the comment area on LinearPress posts: rate limiting for guests across three windows, masked IPs with geolocation, safe Markdown, a live character counter, and an emoji system managed from the admin console. It's a type `both` plugin (server routes plus views and frontend assets) and needs no other plugin. It overrides the base post template (`views/web/post.ejs`) to draw the new comment area, and view overrides take priority over base templates.
+`advanced-comments` rebuilds the comment area on LinearPress posts: rate limiting for guests across three windows, masked IPs with geolocation, safe Markdown, a live character counter, and an emoji system managed from the admin console. It's a type `both` plugin (server routes plus views and frontend assets) and needs no other plugin. It provides an independent comments partial without overriding a theme's `web/post`. Only the unthemed Base post view uses a built-in fallback.
 
 ## What it does
 
-Comments from visitors who are not logged in are limited by IP across three overlapping windows: 1 per minute, 3 per 10 minutes, and 5 per hour by default, all adjustable in settings. These limits stack on top of the base's own per-IP limit, and the two coexist without conflict. You can also decide whether guests must leave a name to comment.
+Comments from visitors who are not logged in are limited by IP across three overlapping windows: 1 per minute, 3 per 10 minutes, and 5 per hour by default, all adjustable in settings. The plugin owns the submission route. Checks and durable quota reservations are serialized within one process, including asynchronous databases; multiple application processes need a database-level lock. Invalid fields and rejected reservations cost no quota. Once validated, attempts consume quota even if later hooks/storage fail, preventing unlimited failed retries. You can also decide whether guests must leave a name to comment.
 
 Guest comments show a partial IP (first two octets for IPv4, first two groups for IPv6) next to the resolved location. The full IP is stored server-side only and never sent to the browser. Locations are resolved through ip-api.com and cached at two levels, in memory and in a database table.
 
@@ -39,13 +39,15 @@ Running behind a reverse proxy? Set `TRUST_PROXY=1` so visitor IPs are read from
 
 The settings page lives at `/admin/advanced-comments/settings` (admin sidebar entry "高级评论", Advanced Comments): rate limiting on/off and the three window values, whether guests must fill in a name, Markdown rendering on/off, the maximum comment length, and the emoji panel on/off. Custom emoji are managed at `/admin/advanced-comments/emoji`, with separate tabs for kaomoji, single images, and albums.
 
-Both pages require `advanced-comments:manage`, which super administrators hold automatically. Settings are stored as JSON under the key `advanced-comments` in the plugin's own `ac_config` table in the business database.
+Both pages require `advanced-comments:manage`, which super administrators hold automatically. Settings use the canonical infrastructure `plugins.config` entry for `advanced-comments`. Both settings pages write it and requests read it afresh, so generic JSON changes take effect immediately. Legacy `ac_config` is imported only when the registry has no configuration. Site settings use `ctx.config.get()`; Base intentionally keeps site settings and the plugin registry in local infrastructure SQLite even when MySQL owns business data.
 
 ## How it plugs in
 
 Comment submission (POST) is overridden on all six permalink shapes that carry comment endpoints; the seventh format, `/posts/:id`, has no comment endpoint in the base system either: `/posts/:slug/comments`, `/posts/:first/:slug/comments`, `/posts/:MM/:dd/:slug/comments`, `/posts/:yyyy/:MM/:dd/:slug/comments`, `/post-:slug-page.html/comments`, and `/post/:slug/comments`. `GET /api/advanced-comments/emoji` returns the emoji store for the frontend picker. The `site:locals` hook injects an `ac` helper object (config, comment metadata, Markdown renderer, emoji API path) for templates, and `admin:menu` adds the sidebar entry.
 
-An hourly job prunes the rate-limit log (kept for two days) and caps the IP cache at 5000 rows. colorful-profiles overrides the same post view but preserves this plugin's comment features and adds avatars, so the two work together.
+Reservations prune logs older than one hour at most once a minute, with additional hourly housekeeping. The in-memory IP cache is capped at 2048 entries. Colorful Profiles composes with the same partial, without replacing a theme's post view.
+
+Themes should conditionally render `<%- include(advancedCommentsPartial) %>` when `typeof advancedCommentsPartial === "string"`. This `site:locals` value is the absolute path to `views/partials/advanced-comments.ejs`. Only `post` and `postUrl` are required; `comments/currentUser/notice/acCommentError/ac` and profile `cf*` helpers have local defaults. The partial retains `ac-toolbar`, `ac-comment-form`, `ac-error`, guest name/email fields, and the explicit submit button used by captcha injection (`form[action$="/comments"]`). Trusted server extensions can pass `acCommentFormExtraHtml`. Layouts must retain plugin styles/scripts; the partial emits the emoji client configuration.
 
 ## Tables
 
@@ -53,7 +55,7 @@ All created in the business database:
 
 | Table | Purpose |
 | --- | --- |
-| `ac_config` | plugin settings (JSON) |
+| `ac_config` | legacy settings, imported once |
 | `ac_comment_log` | guest comment timestamps, the input for rate limiting |
 | `ac_comment_meta` | full IP and resolved location per comment (server-side only) |
 | `ac_ip_cache` | resolved geolocation per IP |

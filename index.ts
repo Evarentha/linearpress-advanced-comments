@@ -1,11 +1,11 @@
 /*
  * Advanced Comments Plugin Entry
  *
- * Cordis plugin that upgrades the comment system with Markdown rendering,
- * IP-based rate limiting and geolocation, and a custom emoji panel.
+ * Cordis plugin that upgrades the comment system with Markdown rendering, IP-based rate limiting and geolocation, and a custom emoji panel.
  *
  * Authors:
  * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ * worryzu <worryzu@gmail.com> @LinearTeam
  *
  * Copyright (C) 2026 Evarentha
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -28,7 +28,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { checkPermission, requireAuth } from '../../services/permission.service.js';
-import { getBaseConfig } from '../../services/config.service.js';
 import { resolvePostParams, postUrl } from '../../core/permalinks.js';
 import type { Post } from '../../types/index.js';
 import { DEFAULT_CONFIG, normalizeConfig, CONFIG_KEY, type AdvancedCommentsConfig } from './src/config.js';
@@ -36,6 +35,8 @@ import { generateUniqueId } from './src/id.js';
 import { detectClientIp, resolveLocation } from './src/ip.js';
 import { countChars, renderMarkdown } from './src/markdown.js';
 import { parseMultipart, readRawBody } from './src/multipart.js';
+import { createRateLimiter } from './src/rate-limit.js';
+import { defaultPostFallback } from './src/default-view.js';
 
 const PLUGIN_ID = 'advanced-comments';
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -114,21 +115,34 @@ export default async function advancedComments(ctx: Context): Promise<void> {
   const db = ctx.databaseService as unknown as Db;
   const { web, hooks } = ctx.linearpress;
 
-  // 在 activate 阶段追加视图目录（绝对路径）：此时其他插件的 manifest 视图已收集完毕，
-  // views 数组倒序解析保证本插件视图优先级最高（可覆盖主题的 web/post）。
+  // Only uniquely named fallback/admin views; themes own their web/post.
   web.viewDir(path.join(PLUGIN_DIR, 'views'));
+  web.middleware(defaultPostFallback('ac-post'));
 
   await db.exec(SCHEMA);
   await fs.ensureDir(FILES_DIR);
 
-  let config: AdvancedCommentsConfig = { ...DEFAULT_CONFIG };
-  try {
-    const row = await db.get<{ value: string }>('SELECT value FROM ac_config WHERE key=?', CONFIG_KEY);
-    if (row?.value) config = normalizeConfig(JSON.parse(row.value));
-  } catch { /* keep defaults */ }
+  // plugins.config is canonical. Import legacy ac_config only once when no
+  // registry value exists; subsequent generic JSON updates are read per request.
+  let stored = await ctx.plugins.getConfig(PLUGIN_ID) as AdvancedCommentsConfig | null;
+  if (stored == null) {
+    try {
+      const row = await db.get<{ value: string }>('SELECT value FROM ac_config WHERE key=?', CONFIG_KEY);
+      if (row?.value) stored = JSON.parse(row.value);
+    } catch { /* legacy corrupt/missing: use defaults */ }
+    await ctx.plugins.setConfig(PLUGIN_ID, normalizeConfig(stored));
+  }
+  // Retire the legacy value after canonical persistence. A later JSON `null`
+  // reset must not resurrect stale settings on the following application boot.
+  await db.run('DELETE FROM ac_config WHERE key=?', CONFIG_KEY);
+  let config = normalizeConfig(stored);
+  const readConfig = async () => {
+    config = normalizeConfig(await ctx.plugins.getConfig(PLUGIN_ID));
+    return config;
+  };
   const saveConfig = async (next: AdvancedCommentsConfig) => {
+    await ctx.plugins.setConfig(PLUGIN_ID, next);
     config = next;
-    try { await db.run('INSERT OR REPLACE INTO ac_config(key,value) VALUES(?,?)', CONFIG_KEY, JSON.stringify(next)); } catch { /* ignore */ }
   };
 
   // 表情内存缓存，供前台面板与渲染使用。
@@ -145,8 +159,8 @@ export default async function advancedComments(ctx: Context): Promise<void> {
   await reloadEmoji();
 
   const emojiUrl = (id: string): string | null => emojiStore.urlById.get(id) ?? null;
-  const renderComment = (content: string): string => {
-    if (config.markdownEnabled) return renderMarkdown(content, emojiUrl);
+  const renderComment = (content: string, cfg = config): string => {
+    if (cfg.markdownEnabled) return renderMarkdown(content, emojiUrl);
     // 关闭 Markdown 时仍展开表情图片令牌，其余按纯文本转义呈现。
     return String(content ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/:emoji:([A-Z0-9_]+)/g, (full, id: string) => { const url = emojiUrl(String(id)); return url ? `<img class="ac-emoji-img" src="${url}" alt="emoji" loading="lazy">` : full; })
@@ -155,21 +169,7 @@ export default async function advancedComments(ctx: Context): Promise<void> {
 
   /* ----------------------------------------------------- rate limiting */
 
-  const checkRateLimit = async (ip: string, cfg: AdvancedCommentsConfig): Promise<string | null> => {
-    if (!cfg.rateLimitEnabled) return null;
-    const now = Date.now();
-    const windows: Array<[number, number, string]> = [
-      [cfg.perMinute, 60_000, '1 分钟'],
-      [cfg.perTenMinutes, 600_000, '10 分钟'],
-      [cfg.perHour, 3_600_000, '1 小时']
-    ];
-    for (const [limit, ms, label] of windows) {
-      const from = new Date(now - ms).toISOString();
-      const row = await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM ac_comment_log WHERE ip=? AND created_at>=?', ip, from);
-      if (Number(row?.n ?? 0) >= limit) return `评论太频繁，请 ${label} 后再试。`;
-    }
-    return null;
-  };
+  const reserveRateLimit = createRateLimiter(db);
 
   /* ------------------------------------------- comment route override */
 
@@ -182,32 +182,38 @@ export default async function advancedComments(ctx: Context): Promise<void> {
     '/post/:slug/comments'
   ];
 
-  const renderBackToPost = (res: Response, post: Post, error: string): void => {
-    const site = getBaseConfig();
+  const renderBackToPost = async (res: Response, post: Post, error: string): Promise<void> => {
+    const site = await ctx.config.get();
     res.redirect(`${postUrl(post, site.permalink)}?comment_error=${encodeURIComponent(error)}`);
   };
 
   const submitComment: RequestHandler = async (req, res) => {
     try {
-      const { slug, id } = resolvePostParams(req.params as Record<string, string | undefined>, getBaseConfig().permalink);
+      const cfg = await readConfig();
+      const siteConfig = await ctx.config.get();
+      const { slug, id } = resolvePostParams(req.params as Record<string, string | undefined>, siteConfig.permalink);
       const posts = ctx.posts;
       const post = id ? await posts.findById(id) : await posts.findBySlug(slug ?? '');
-      if (!post) { res.status(404).render('error', { title: '未找到', message: '文章不存在或尚未发布。' }); return; }
+      if (!post || post.status !== 'published') { res.status(404).render('error', { title: '未找到', message: '文章不存在或尚未发布。' }); return; }
 
       const body = (req.body ?? {}) as Record<string, unknown>;
       const content = String(body.content ?? '');
       const isGuest = !req.session.userId;
       const clientIp = detectClientIp(req);
 
-      if (isGuest && config.requireName) {
+      if (isGuest && cfg.requireName) {
         const name = text(body.guest_name);
-        if (!name) { renderBackToPost(res, post, '未登录用户评论时必须填写姓名。'); return; }
+        if (!name) { await renderBackToPost(res, post, '未登录用户评论时必须填写姓名。'); return; }
       }
-      if (countChars(content) > config.maxLength) {
-        renderBackToPost(res, post, `评论内容不能超过 ${config.maxLength} 字。`); return;
+      if (content.trim().length < 2) { await renderBackToPost(res, post, '评论内容过短。'); return; }
+      if (text(body.guest_name).length > 80 || String(body.guest_email ?? '').length > 160) {
+        await renderBackToPost(res, post, '姓名或邮箱过长。'); return;
       }
-      const limitError = isGuest ? await checkRateLimit(clientIp, config) : null;
-      if (limitError) { renderBackToPost(res, post, limitError); return; }
+      if (content.length > 5000 || countChars(content) > cfg.maxLength) {
+        await renderBackToPost(res, post, `评论内容不能超过 ${cfg.maxLength} 字。`); return;
+      }
+      const limitError = isGuest ? await reserveRateLimit(clientIp, cfg) : null;
+      if (limitError) { await renderBackToPost(res, post, limitError); return; }
 
       const location = await resolveLocation(clientIp, db);
 
@@ -222,7 +228,6 @@ export default async function advancedComments(ctx: Context): Promise<void> {
 
       const now = new Date().toISOString();
       if (isGuest) {
-        await db.run('INSERT INTO ac_comment_log(ip,created_at) VALUES(?,?)', clientIp, now);
         await db.run('INSERT OR REPLACE INTO ac_comment_meta(comment_id,ip,location,created_at) VALUES(?,?,?,?)', comment.id, clientIp, location, now);
         invalidateMetaCache();
       }
@@ -258,15 +263,18 @@ export default async function advancedComments(ctx: Context): Promise<void> {
   };
 
   hooks.on('site:locals', async (locals: Record<string, unknown>) => {
+    const cfg = await readConfig();
     const meta = await loadMeta();
     return {
       ...locals,
+      advancedCommentsPartial: path.join(PLUGIN_DIR, 'views/partials/advanced-comments.ejs'),
+      acCommentError: locals.acCommentError ?? '',
       ac: {
-        config,
+        config: cfg,
         meta,
-        renderComment,
+        renderComment: (content: string) => renderComment(content, cfg),
         api: API_EMOJI,
-        emojiEnabled: config.emojiEnabled,
+        emojiEnabled: cfg.emojiEnabled,
         isGuest: !locals.currentUser
       }
     };
@@ -283,13 +291,14 @@ export default async function advancedComments(ctx: Context): Promise<void> {
 
   const parseYes = (v: unknown): boolean => v === 'on' || v === true;
 
-  web.register('get', `${ADMIN_BASE}/settings`, requireAuth, checkPermission('advanced-comments:manage'), (_req, res) => {
+  web.register('get', `${ADMIN_BASE}/settings`, requireAuth, checkPermission('advanced-comments:manage'), wrap(async (_req, res) => {
+    await readConfig();
     res.render('admin/ac-comments-settings', {
       title: '高级评论设置',
       config,
       notice: ''
     });
-  });
+  }));
   web.register('post', `${ADMIN_BASE}/settings`, requireAuth, checkPermission('advanced-comments:manage'), wrap(async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const next: AdvancedCommentsConfig = {
@@ -302,7 +311,7 @@ export default async function advancedComments(ctx: Context): Promise<void> {
       markdownEnabled: parseYes(body.markdownEnabled),
       emojiEnabled: parseYes(body.emojiEnabled)
     };
-    await saveConfig(config = normalizeConfig(next));
+    await saveConfig(normalizeConfig(next));
     res.render('admin/ac-comments-settings', { title: '高级评论设置', config, notice: '设置已保存。' });
   }));
 
@@ -427,7 +436,11 @@ export default async function advancedComments(ctx: Context): Promise<void> {
           const cutoff = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
           await db.run('DELETE FROM ac_comment_log WHERE created_at<?', cutoff);
           const count = await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM ac_ip_cache');
-          if (Number(count?.n ?? 0) > 5000) await db.run('DELETE FROM ac_ip_cache WHERE rowid IN (SELECT rowid FROM ac_ip_cache ORDER BY rowid LIMIT ?)', Number(count!.n) - 5000);
+          if (Number(count?.n ?? 0) > 5000) {
+            // Explicit primary keys work on both SQLite and MySQL (no rowid).
+            const stale = await db.all<{ ip: string }>('SELECT ip FROM ac_ip_cache ORDER BY ip LIMIT ?', Math.min(Number(count!.n) - 5000, 500));
+            if (stale.length) await db.run(`DELETE FROM ac_ip_cache WHERE ip IN (${stale.map(() => '?').join(',')})`, ...stale.map(row => row.ip));
+          }
         } catch { /* 清理失败不影响主流程 */ }
       })();
     }, 60 * 60 * 1000);

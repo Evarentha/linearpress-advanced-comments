@@ -1,0 +1,15 @@
+<!--
+  LinearPress Ac Post
+
+  Renders the ac post template for LinearPress.
+
+  Authors:
+  MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+  worryzu <worryzu@gmail.com> @LinearTeam
+
+  Copyright (C) 2026 Evarentha
+  SPDX-License-Identifier: GPL-3.0-or-later
+-->
+
+<article class="article"><p class="meta"><%= formatDate(post.created_at) %> / <%= post.views %> VIEWS</p><h1><%= post.title %></h1><div class="article-body"><%- html %></div></article>
+<%- include(advancedCommentsPartial) %>

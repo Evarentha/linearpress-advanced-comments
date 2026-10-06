@@ -1,0 +1,67 @@
+<!--
+  LinearPress Advanced Comments
+
+  Renders the advanced comments template for LinearPress.
+
+  Authors:
+  MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+  worryzu <worryzu@gmail.com> @LinearTeam
+
+  Copyright (C) 2026 Evarentha
+  SPDX-License-Identifier: GPL-3.0-or-later
+-->
+
+<!-- Contract: post + postUrl required; all other locals optional. Captcha plugins
+     can inject into form[action$="/comments"] before its explicit submit button. -->
+<%
+  const acView = typeof ac !== 'undefined' && ac ? ac : null;
+  const acError = typeof acCommentError !== 'undefined' ? acCommentError : '';
+  const acNotice = typeof notice !== 'undefined' ? notice : '';
+  const acUser = typeof currentUser !== 'undefined' ? currentUser : null;
+  const acUsers = typeof colorfulUsers !== 'undefined' ? colorfulUsers : {};
+  const acAvatar = typeof cfAvatarHtml === 'function' ? cfAvatarHtml : () => '';
+  const acName = typeof cfDisplayName === 'function' ? cfDisplayName : (id) => acUser && acUser.id === id ? acUser.username : '注册用户';
+  const acHref = typeof cfProfileHref === 'function' ? cfProfileHref : () => null;
+  const acComments = typeof comments !== 'undefined' && Array.isArray(comments) ? comments.filter(c => !c.status || c.status === 'approved') : [];
+%>
+<% if (!post.status || post.status === 'published') { %>
+<section class="comments ac-comments">
+  <h2>评论</h2>
+  <% if (acError) { %><p class="ac-error"><%= acError %></p><% } %>
+  <% if (acNotice) { %><p class="notice">评论已提交，等待审核。</p><% } %>
+  <% acComments.forEach(comment => { %>
+    <% var meta = (acView && acView.meta && acView.meta[comment.id]) || null; %>
+    <% var cu = acUsers && comment.user_id ? acUsers[comment.user_id] : null; %>
+    <div class="comment ac-comment">
+      <div class="ac-comment-head">
+        <% if (comment.user_id) { %><%- acAvatar(comment.user_id, 38, 'cf-comment-avatar') %><% } else { %><span class="cf-comment-avatar cf-comment-avatar-guest">👤</span><% } %>
+        <div class="ac-comment-author">
+          <strong><% if (comment.user_id && acUser && cu && acHref(comment.user_id)) { %><a href="<%= acHref(comment.user_id) %>" class="cf-comment-author"><%= acName(comment.user_id) %></a><% } else { %><%= comment.guest_name || (cu ? acName(comment.user_id) : '注册用户') %><% } %></strong>
+          <% if (comment.user_id == null && meta) { %><span class="ac-ip">IP <%= meta.ip %> · <%= meta.location %></span><% } %>
+        </div>
+      </div>
+      <div class="ac-comment-body"><% if (acView && acView.renderComment) { %><%- acView.renderComment(comment.content) %><% } else { %><%= comment.content %><% } %></div>
+    </div>
+  <% }) %>
+
+  <form method="post" action="<%= postUrl(post) %>/comments" class="ac-comment-form">
+    <% if (acUser) { %>
+      <p class="ac-as">以 <strong><%= acName(acUser.id) %></strong> 身份评论。</p>
+    <% } else { %>
+      <input name="guest_name" placeholder="<%= (acView && acView.config && acView.config.requireName) ? '姓名（必填）' : '姓名' %>" class="ac-name" <%= (acView && acView.config && acView.config.requireName) ? 'required' : '' %>>
+      <input name="guest_email" type="email" placeholder="邮箱（选填）" class="ac-email">
+    <% } %>
+    <div class="ac-editor">
+      <textarea name="content" id="ac-comment-content" required placeholder="<%= acView && acView.config.markdownEnabled ? '写下你的评论，支持 Markdown 语法…' : '写下你的评论…' %>" class="ac-textarea"></textarea>
+      <div class="ac-toolbar">
+        <button type="button" <%= acView && acView.emojiEnabled ? '' : 'hidden' %> class="ac-emoji-btn" id="ac-emoji-btn" title="表情"><span>☺</span> 表情</button>
+        <span class="ac-toolbar-right"><% if (acView && acView.config.markdownEnabled) { %><span class="ac-md-hint">M↓ Supported</span><% } %><span class="ac-char-count" id="ac-char-count">0/<%= acView ? acView.config.maxLength : 300 %></span></span>
+      </div>
+    </div>
+    <% if (typeof acCommentFormExtraHtml === 'string') { %><%- acCommentFormExtraHtml %><% } %>
+    <button class="button" type="submit">提交评论</button>
+  </form>
+</section>
+
+<script>window.__AC_EMOJI_API__ = "<%= acView ? acView.api : '' %>";window.__AC_MAXLEN__ = <%= acView ? acView.config.maxLength : 300 %>;window.__AC_EMOJI_ENABLED__ = <%= acView && acView.emojiEnabled ? 'true' : 'false' %>;</script>
+<% } %>

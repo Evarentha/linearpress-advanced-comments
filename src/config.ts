@@ -5,6 +5,7 @@
  *
  * Authors:
  * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ * worryzu <worryzu@gmail.com> @LinearTeam
  *
  * Copyright (C) 2026 Evarentha
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -58,16 +59,17 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
 
 /** 读取配置，缺失或非法字段回退默认值。 */
 export function normalizeConfig(raw: Partial<AdvancedCommentsConfig> | null | undefined): AdvancedCommentsConfig {
-  const base = raw ?? {};
+  const base = raw && typeof raw === 'object' ? raw : {};
+  const bool = (value: unknown, fallback: boolean) => typeof value === 'boolean' ? value : fallback;
   return {
     perMinute: clampInt(base.perMinute, DEFAULT_CONFIG.perMinute, 1, 100),
     perTenMinutes: clampInt(base.perTenMinutes, DEFAULT_CONFIG.perTenMinutes, 1, 100),
     perHour: clampInt(base.perHour, DEFAULT_CONFIG.perHour, 1, 1000),
-    rateLimitEnabled: base.rateLimitEnabled ?? DEFAULT_CONFIG.rateLimitEnabled,
-    requireName: base.requireName ?? DEFAULT_CONFIG.requireName,
+    rateLimitEnabled: bool(base.rateLimitEnabled, DEFAULT_CONFIG.rateLimitEnabled),
+    requireName: bool(base.requireName, DEFAULT_CONFIG.requireName),
     maxLength: clampInt(base.maxLength, DEFAULT_CONFIG.maxLength, 1, 10000),
-    markdownEnabled: base.markdownEnabled ?? DEFAULT_CONFIG.markdownEnabled,
-    emojiEnabled: base.emojiEnabled ?? DEFAULT_CONFIG.emojiEnabled
+    markdownEnabled: bool(base.markdownEnabled, DEFAULT_CONFIG.markdownEnabled),
+    emojiEnabled: bool(base.emojiEnabled, DEFAULT_CONFIG.emojiEnabled)
   };
 }
 
