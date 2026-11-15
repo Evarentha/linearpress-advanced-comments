@@ -121,7 +121,7 @@ export function renderMarkdown(
         quoteLines.push(rawLines[i].replace(/^>\s?/, ''));
         i++;
       }
-      out.push(`<blockquote>${renderParagraph(quoteLines, emojiUrl)}</blockquote>`);
+      out.push(`<blockquote class="ac-md-quote">${renderParagraph(quoteLines, emojiUrl)}</blockquote>`);
       continue;
     }
 

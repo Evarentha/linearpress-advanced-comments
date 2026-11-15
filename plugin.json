@@ -6,6 +6,7 @@
   "author": "LinearPress",
   "icon": "评论",
   "type": "both",
+  "cssPrefix": "ac",
   "main": "index.ts",
   "views": "views",
   "public": "public",

@@ -33,8 +33,8 @@
 .comment-body .ac-emoji-img { width: 28px; height: 28px; vertical-align: -8px; }
 .comment-body .ac-md-img { max-width: min(100%, 320px); border-radius: var(--lp-radius-md); }
 .comment-body .ac-md-heading { margin: .4em 0; }
-.comment-body pre { padding: 10px 12px; border-radius: var(--lp-radius-md); background: var(--lp-surface-2); overflow-x: auto; font-size: 13px; }
-.comment-body blockquote { margin: .5em 0; padding-left: 12px; border-left: 3px solid var(--lp-border-strong); color: var(--lp-text-2); }
+.comment-body .ac-md-code { padding: 10px 12px; border-radius: var(--lp-radius-md); background: var(--lp-surface-2); overflow-x: auto; font-size: 13px; }
+.comment-body .ac-md-quote { margin: .5em 0; padding-left: 12px; border-left: 3px solid var(--lp-border-strong); color: var(--lp-text-2); }
 
 /* settings page */
 [data-lp-plugin="advanced-comments"] .ac-inline-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--lp-space-3); }
