@@ -5,7 +5,7 @@
   "type": "module",
   "main": "index.ts",
   "license": "GPL-3.0-or-later",
-  "author": "MoyuZJ <moyuzj@moyuzj.cn> (https://moyuzj.cn)",
+  "author": "MoyuZJ <moyuzj@evarentha.com> (https://moyuzj.cn)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Evarentha/linearpress-advanced-comments.git"

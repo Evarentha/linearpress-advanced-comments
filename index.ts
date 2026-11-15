@@ -1,474 +1,286 @@
 /*
- * Advanced Comments Plugin Entry
+ * Advanced Comments Plugin Entry Point
  *
- * Cordis plugin that upgrades the comment system with Markdown rendering, IP-based rate limiting and geolocation, and a custom emoji panel.
+ * Comment rules (rate limits, length, required name), Markdown, emoji picker and optional IP region display.
  *
  * Authors:
- * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
- * worryzu <worryzu@gmail.com> @LinearTeam
+ * MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+ * worryzu <worryzu@evarentha.com> @LinearTeam
  *
  * Copyright (C) 2026 Evarentha
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /**
- * Registers the plugin's SQLite schema and persisted configuration, overrides
- * the comment submission route for every permalink pattern, and exposes
- * comment rendering helpers to the overridden post view. Guest comments are
- * rate-limited per client IP and recorded with masked IPs and best-effort
- * geolocation. Also provides the custom emoji subsystem (kaomoji, single
- * images, albums) with admin management pages and a JSON API.
+ * <p>Works through the core comment pipeline instead of replacing the comment
+ * route or the post template: a <code>comment</code> guard enforces length
+ * and guest rate limits, the <code>comment.content</code> filter renders
+ * Markdown and emoji, slots add the toolbar and the region label.</p>
+ * <p>IP region lookup sends visitor IPs to a third-party service, so it is off
+ * by default and runs after the comment is saved (never delays posting).</p>
+ *
  * @since 1.0.0
  */
 
-import type { Context } from 'cordis';
-import type { RequestHandler, Request, Response } from 'express';
 import fs from 'fs-extra';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import { checkPermission, requireAuth } from '../../services/permission.service.js';
-import { resolvePostParams, postUrl } from '../../core/permalinks.js';
-import type { Post } from '../../types/index.js';
-import { DEFAULT_CONFIG, normalizeConfig, CONFIG_KEY, type AdvancedCommentsConfig } from './src/config.js';
+import { fileURLToPath } from 'node:url';
+import type { Context } from 'cordis';
+import { checkPermission, requireAuth, route, text, readMultipart, UploadError, messageOf, placeholders, utcNow } from 'linearpress/plugin-api';
+import type { DisplayComment } from 'linearpress/plugin-api';
+import { DEFAULT_CONFIG, normalizeConfig, parseConfigBody, type AdvancedCommentsConfig } from './src/config.js';
 import { generateUniqueId } from './src/id.js';
-import { detectClientIp, resolveLocation } from './src/ip.js';
+import { lookupRegion } from './src/ip.js';
 import { countChars, renderMarkdown } from './src/markdown.js';
-import { parseMultipart, readRawBody } from './src/multipart.js';
 import { createRateLimiter } from './src/rate-limit.js';
-import { defaultPostFallback } from './src/default-view.js';
 
 const PLUGIN_ID = 'advanced-comments';
-const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
-const PUBLIC_DIR = path.join(PLUGIN_DIR, 'public');
-const FILES_DIR = path.join(PUBLIC_DIR, 'ac-files');
-const ADMIN_BASE = '/admin/advanced-comments';
-const EMOJI_BASE = `${ADMIN_BASE}/emoji`;
-const API_EMOJI = '/api/advanced-comments/emoji';
-const MAX_UPLOAD = 16 * 1024 * 1024;
+const DIR = path.dirname(fileURLToPath(import.meta.url));
+const VIEWS = path.join(DIR, 'views', PLUGIN_ID);
+const FILES = path.join(process.cwd(), 'uploads', PLUGIN_ID);
+const LEGACY_FILES = path.join(DIR, 'public', 'ac-files');
+const FILE_ROUTE = '/advanced-comments/emoji';
+const ADMIN = '/admin/advanced-comments';
+const MAX_IMAGE = 2 * 1024 * 1024;
+const IMAGE_TYPES: Array<[string, (b: Buffer) => boolean]> = [
+  ['.png', (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))],
+  ['.jpg', (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff],
+  ['.gif', (b) => b.subarray(0, 4).toString('latin1') === 'GIF8'],
+  ['.webp', (b) => b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP']
+];
 
-/* ------------------------------------------------------------------ schema */
+interface Emoji { id: string; name: string; url: string; }
+interface Album { id: string; name: string; cover: string; description: string | null; emojis: Array<Emoji & { position: number }>; }
+interface Store { singles: Emoji[]; texts: Array<{ id: string; name: string; content: string }>; albums: Album[]; }
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS ac_config (key TEXT PRIMARY KEY, value TEXT);
-CREATE TABLE IF NOT EXISTS ac_comment_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS ac_comment_log_ip_time ON ac_comment_log(ip, created_at);
-CREATE TABLE IF NOT EXISTS ac_comment_meta (comment_id INTEGER PRIMARY KEY, ip TEXT NOT NULL, location TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ac_ip_cache (ip TEXT PRIMARY KEY, location TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ac_text_emoji (id TEXT PRIMARY KEY, name TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ac_single_emoji (id TEXT PRIMARY KEY, name TEXT NOT NULL, image_path TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ac_album (id TEXT PRIMARY KEY, name TEXT NOT NULL, cover_path TEXT NOT NULL, description TEXT, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ac_album_emoji (id TEXT PRIMARY KEY, album_id TEXT NOT NULL, image_path TEXT NOT NULL, name TEXT NOT NULL, position INTEGER NOT NULL);
-`;
-
-/* ------------------------------------------------------------- type helpers */
-
-type Db = {
-  all<T>(sql: string, ...params: unknown[]): Promise<T[]> | T[];
-  get<T>(sql: string, ...params: unknown[]): Promise<T | undefined> | T | undefined;
-  run(sql: string, ...params: unknown[]): unknown;
-  exec(sql: string): Promise<unknown> | unknown;
-};
-
-interface ImageEmoji { id: string; name: string; url: string; }
-interface TextEmoji { id: string; name: string; content: string; }
-interface AlbumEmoji { id: string; name: string; url: string; position: number; }
-interface Album { id: string; name: string; cover: string; description: string | null; emojis: AlbumEmoji[]; }
-interface EmojiStore { singles: ImageEmoji[]; texts: TextEmoji[]; albums: Album[]; urlById: Map<string, string>; }
-interface SingleRow { id: string; name: string; image_path: string; created_at: string; }
-interface TextRow { id: string; name: string; content: string; }
-interface AlbumRow { id: string; name: string; cover_path: string; description: string | null; created_at: string; }
-interface AlbumEmojiRow { id: string; album_id: string; image_path: string; name: string; position: number; }
-
-const messageOf = (error: unknown): string => (error instanceof Error ? error.message : '操作失败');
-const param = (value: unknown): string => Array.isArray(value) ? String(value[0] ?? '') : String(value ?? '');
-const text = (value: unknown): string => String(value ?? '').trim();
-const fileUrl = (name: string): string => `/plugins/${PLUGIN_ID}/ac-files/${name}`;
-/** 页面处理器包装：失败时渲染 error 视图（与 Base wrap 语义一致）。 */
-const wrap = (fn: (req: Request, res: Response) => Promise<unknown> | unknown): RequestHandler => (req, res) => {
-  void Promise.resolve(fn(req, res)).catch((error) => res.status(500).render('error', { title: '服务器错误', message: messageOf(error) }));
-};
-/** JSON API 处理器包装：失败时返回 { ok:false }（与 Base JSON 约定一致）。 */
-const wrapJson = (fn: (req: Request, res: Response) => Promise<unknown> | unknown): RequestHandler => (req, res) => {
-  void Promise.resolve(fn(req, res)).catch((error) => res.status(500).json({ ok: false, message: messageOf(error) }));
-};
-
-function buildStore(singleRows: Array<{ id: string; name: string; image_path: string }>, textRows: Array<{ id: string; name: string; content: string }>, albumRows: Array<{ id: string; name: string; cover_path: string; description: string | null; created_at: string }>, albumEmojiRows: Array<{ id: string; album_id: string; image_path: string; name: string; position: number }>): EmojiStore {
-  const urlById = new Map<string, string>();
-  const singles = singleRows.map((row) => { const url = fileUrl(row.image_path); urlById.set(row.id, url); return { id: row.id, name: row.name, url }; });
-  const texts = textRows.map((row) => ({ id: row.id, name: row.name, content: row.content }));
-  const byAlbum = new Map<string, AlbumEmoji[]>();
-  for (const row of albumEmojiRows) {
-    const url = fileUrl(row.image_path); urlById.set(row.id, url);
-    const list = byAlbum.get(row.album_id) ?? []; list.push({ id: row.id, name: row.name, url, position: row.position }); byAlbum.set(row.album_id, list);
-  }
-  const albums = albumRows.map((row) => {
-    const emojis = (byAlbum.get(row.id) ?? []).sort((a, b) => a.position - b.position);
-    return { id: row.id, name: row.name, cover: fileUrl(row.cover_path), description: row.description, emojis };
-  });
-  return { singles, texts, albums, urlById };
-}
-
-/* ------------------------------------------------------------------ config */
+const fileUrl = (name: string) => `${FILE_ROUTE}/${encodeURIComponent(name)}`;
+const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]!));
 
 export default async function advancedComments(ctx: Context): Promise<void> {
-  const db = ctx.databaseService as unknown as Db;
-  const { web, hooks } = ctx.linearpress;
+  const { web, ui, admin, auth, hooks } = ctx.linearpress;
+  const db = () => ctx.databaseService;
+  const mysql = db().dialect === 'mysql';
 
-  // Only uniquely named fallback/admin views; themes own their web/post.
-  web.viewDir(path.join(PLUGIN_DIR, 'views'));
-  web.middleware(defaultPostFallback('ac-post'));
+  /* ---------- schema ---------- */
+  const text255 = mysql ? 'VARCHAR(255)' : 'TEXT';
+  const key = mysql ? 'VARCHAR(64)' : 'TEXT';
+  await db().exec([
+    `CREATE TABLE IF NOT EXISTS ac_comment_log (id ${mysql ? 'INT AUTO_INCREMENT' : 'INTEGER'} PRIMARY KEY${mysql ? '' : ' AUTOINCREMENT'}, ip ${mysql ? 'VARCHAR(64)' : 'TEXT'} NOT NULL, created_at ${mysql ? 'VARCHAR(40)' : 'TEXT'} NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS ac_comment_meta (comment_id ${mysql ? 'INT' : 'INTEGER'} PRIMARY KEY, ip ${mysql ? 'VARCHAR(64)' : 'TEXT'} NOT NULL, location ${text255} NOT NULL, created_at ${mysql ? 'VARCHAR(40)' : 'TEXT'} NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS ac_ip_cache (ip ${mysql ? 'VARCHAR(64)' : 'TEXT'} PRIMARY KEY, location ${text255} NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS ac_text_emoji (id ${key} PRIMARY KEY, name ${text255} NOT NULL, content ${mysql ? 'TEXT' : 'TEXT'} NOT NULL, created_at ${mysql ? 'VARCHAR(40)' : 'TEXT'} NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS ac_single_emoji (id ${key} PRIMARY KEY, name ${text255} NOT NULL, image_path ${text255} NOT NULL, created_at ${mysql ? 'VARCHAR(40)' : 'TEXT'} NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS ac_album (id ${key} PRIMARY KEY, name ${text255} NOT NULL, cover_path ${text255} NOT NULL, description ${mysql ? 'TEXT' : 'TEXT'}, created_at ${mysql ? 'VARCHAR(40)' : 'TEXT'} NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS ac_album_emoji (id ${key} PRIMARY KEY, album_id ${key} NOT NULL, image_path ${text255} NOT NULL, name ${text255} NOT NULL, position INT NOT NULL)`
+  ].join(';\n'));
+  if (!mysql) await db().exec('CREATE INDEX IF NOT EXISTS ac_comment_log_ip_time ON ac_comment_log(ip, created_at)');
 
-  await db.exec(SCHEMA);
-  await fs.ensureDir(FILES_DIR);
-
-  // plugins.config is canonical. Import legacy ac_config only once when no
-  // registry value exists; subsequent generic JSON updates are read per request.
-  let stored = await ctx.plugins.getConfig(PLUGIN_ID) as AdvancedCommentsConfig | null;
-  if (stored == null) {
-    try {
-      const row = await db.get<{ value: string }>('SELECT value FROM ac_config WHERE key=?', CONFIG_KEY);
-      if (row?.value) stored = JSON.parse(row.value);
-    } catch { /* legacy corrupt/missing: use defaults */ }
-    await ctx.plugins.setConfig(PLUGIN_ID, normalizeConfig(stored));
+  /* ---------- files: moved out of the plugin folder so updates cannot delete them ---------- */
+  await fs.ensureDir(FILES);
+  if (await fs.pathExists(LEGACY_FILES)) {
+    for (const name of await fs.readdir(LEGACY_FILES)) if (!await fs.pathExists(path.join(FILES, name))) await fs.copy(path.join(LEGACY_FILES, name), path.join(FILES, name));
   }
-  // Retire the legacy value after canonical persistence. A later JSON `null`
-  // reset must not resurrect stale settings on the following application boot.
-  await db.run('DELETE FROM ac_config WHERE key=?', CONFIG_KEY);
+
+  /* ---------- config (3.x kept it in ac_config) ---------- */
+  let stored = await ctx.plugins.getConfig<Partial<AdvancedCommentsConfig>>(PLUGIN_ID);
+  if (stored == null && await db().hasTable('ac_config')) {
+    try { const row = await db().get<{ value: string }>(`SELECT value FROM ac_config WHERE ${mysql ? '`key`' : 'key'} = ?`, PLUGIN_ID); if (row?.value) stored = JSON.parse(row.value); } catch { /* defaults */ }
+  }
   let config = normalizeConfig(stored);
-  const readConfig = async () => {
-    config = normalizeConfig(await ctx.plugins.getConfig(PLUGIN_ID));
-    return config;
-  };
-  const saveConfig = async (next: AdvancedCommentsConfig) => {
-    await ctx.plugins.setConfig(PLUGIN_ID, next);
-    config = next;
-  };
+  if (stored == null) await ctx.plugins.setConfig(PLUGIN_ID, config);
 
-  // 表情内存缓存，供前台面板与渲染使用。
-  let emojiStore: EmojiStore = { singles: [], texts: [], albums: [], urlById: new Map() };
-  const reloadEmoji = async () => {
+  /* ---------- emoji store ---------- */
+  let store: Store = { singles: [], texts: [], albums: [] };
+  const urlById = new Map<string, string>();
+  async function reloadEmoji() {
     const [singles, texts, albums, albumEmojis] = await Promise.all([
-      db.all<SingleRow>('SELECT id,name,image_path,created_at FROM ac_single_emoji ORDER BY created_at'),
-      db.all<TextRow>('SELECT id,name,content FROM ac_text_emoji ORDER BY created_at'),
-      db.all<AlbumRow>('SELECT id,name,cover_path,description,created_at FROM ac_album ORDER BY created_at'),
-      db.all<AlbumEmojiRow>('SELECT id,album_id,image_path,name,position FROM ac_album_emoji ORDER BY album_id,position')
+      db().all<{ id: string; name: string; image_path: string }>('SELECT id, name, image_path FROM ac_single_emoji ORDER BY created_at'),
+      db().all<{ id: string; name: string; content: string }>('SELECT id, name, content FROM ac_text_emoji ORDER BY created_at'),
+      db().all<{ id: string; name: string; cover_path: string; description: string | null }>('SELECT id, name, cover_path, description FROM ac_album ORDER BY created_at'),
+      db().all<{ id: string; album_id: string; image_path: string; name: string; position: number }>('SELECT id, album_id, image_path, name, position FROM ac_album_emoji ORDER BY album_id, position')
     ]);
-    emojiStore = buildStore(singles, texts, albums, albumEmojis);
-  };
+    urlById.clear();
+    const single = singles.map((row) => { const url = fileUrl(row.image_path); urlById.set(row.id, url); return { id: row.id, name: row.name, url }; });
+    const albumList = albums.map((album) => ({
+      id: album.id, name: album.name, cover: fileUrl(album.cover_path), description: album.description,
+      emojis: albumEmojis.filter((row) => row.album_id === album.id).map((row) => { const url = fileUrl(row.image_path); urlById.set(row.id, url); return { id: row.id, name: row.name, url, position: Number(row.position) }; })
+    }));
+    store = { singles: single, texts, albums: albumList };
+  }
   await reloadEmoji();
+  const emojiUrl = (id: string) => urlById.get(id) ?? null;
 
-  const emojiUrl = (id: string): string | null => emojiStore.urlById.get(id) ?? null;
-  const renderComment = (content: string, cfg = config): string => {
-    if (cfg.markdownEnabled) return renderMarkdown(content, emojiUrl);
-    // 关闭 Markdown 时仍展开表情图片令牌，其余按纯文本转义呈现。
-    return String(content ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/:emoji:([A-Z0-9_]+)/g, (full, id: string) => { const url = emojiUrl(String(id)); return url ? `<img class="ac-emoji-img" src="${url}" alt="emoji" loading="lazy">` : full; })
-      .replace(/\n/g, '<br>');
+  /* ---------- posting rules ---------- */
+  const reserve = createRateLimiter(db());
+  auth.guard('comment', {
+    id: PLUGIN_ID,
+    order: 50,
+    async before({ fields, user }) {
+      const content = String(fields.content ?? '');
+      const length = countChars(content.trim());
+      if (length < config.minLength) return { deny: `评论至少需要 ${config.minLength} 个字`, field: 'content' };
+      if (length > config.maxLength) return { deny: `评论最多 ${config.maxLength} 字，现在有 ${length} 字`, field: 'content' };
+      if (!user && config.requireName && !String(fields.guest_name ?? '').trim()) return { deny: '请填写称呼', field: 'guest_name' };
+    }
+  });
+  // Rate limits count only comments that are actually being created (after every other check passed).
+  hooks.on('comment:beforeCreate', async (draft) => {
+    if (!draft.userId) { const limited = await reserve(draft.ip ?? '', config); if (limited) throw new Error(limited); }
+    return draft;
+  });
+  ui.filter('comments.guestNameRequired', (value: boolean) => value || config.requireName);
+
+  /* ---------- display ---------- */
+  ui.filter('comment.content', (html: string, comment: { content?: string }) => config.markdownEnabled
+    ? renderMarkdown(String(comment?.content ?? ''), emojiUrl)
+    : String(html).replace(/:emoji:([A-Z0-9_]+)/g, (token, id: string) => { const url = emojiUrl(id); return url ? `<img class="ac-emoji-img" src="${url}" alt="表情" loading="lazy">` : token; }));
+  ui.slot('comment.form.toolbar', {
+    render: () => {
+      const parts = [
+        config.emojiEnabled ? '<button type="button" class="btn btn-ghost btn-sm" data-ac-emoji aria-haspopup="dialog">☺ 表情</button>' : '',
+        config.markdownEnabled ? '<a class="ac-hint" href="https://commonmark.org/help/" target="_blank" rel="noopener" title="支持 **粗体**、*斜体*、`代码`、链接、列表和引用">支持 Markdown</a>' : '',
+        `<span class="ac-count num" data-ac-count data-max="${config.maxLength}" aria-live="polite"></span>`
+      ];
+      return `<span class="cluster ac-toolbar" data-lp-plugin="${PLUGIN_ID}">${parts.join('')}</span>`;
+    }
+  });
+  hooks.on('comments:decorate', async (payload) => {
+    if (!config.showLocation || !payload.comments.length) return payload;
+    const ids = payload.comments.map((comment) => comment.id);
+    const rows = await db().all<{ comment_id: number; location: string }>(`SELECT comment_id, location FROM ac_comment_meta WHERE comment_id IN (${placeholders(ids.length)})`, ...ids);
+    const byId = new Map(rows.map((row) => [Number(row.comment_id), row.location]));
+    for (const comment of payload.comments) { const location = byId.get(comment.id); if (location) comment.extra.region = location; }
+    return payload;
+  });
+  ui.slot('comment.meta', {
+    render: ({ args }) => {
+      const region = (args.comment as DisplayComment | undefined)?.extra?.region;
+      return config.showLocation && typeof region === 'string' && region ? `<span class="muted ac-region" data-lp-plugin="${PLUGIN_ID}">IP 属地：${escapeHtml(region)}</span>` : '';
+    }
+  });
+  hooks.on('comment:afterCreate', async (comment) => {
+    if (config.showLocation && comment.ip) {
+      // Background lookup: posting never waits for the third-party service.
+      void lookupRegion(comment.ip, db()).then((location) => db().upsert('ac_comment_meta', { comment_id: comment.id, ip: comment.ip!, location, created_at: utcNow() }, ['comment_id'], ['location'])).catch((error) => ctx.logger.warn('region lookup failed:', messageOf(error)));
+    }
+    return comment;
+  });
+
+  /* ---------- emoji API and files ---------- */
+  web.register('get', '/api/advanced-comments/emoji', (_req, res) => {
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json({ ok: true, data: config.emojiEnabled ? store : { singles: [], texts: [], albums: [] } });
+  });
+  web.register('get', `${FILE_ROUTE}/:file`, (req, res) => {
+    const name = path.basename(String(req.params.file));
+    if (!/^[\w.-]+\.(png|jpe?g|gif|webp)$/i.test(name)) return void res.status(404).end();
+    res.sendFile(name, { root: FILES, maxAge: '30d', headers: { 'X-Content-Type-Options': 'nosniff' } }, (error) => { if (error && !res.headersSent) res.status(404).end(); });
+  });
+
+  /* ---------- admin ---------- */
+  admin.registerMenu({ title: '评论设置', link: ADMIN, group: 'community', order: 20, permission: 'advanced-comments:manage' });
+  admin.registerSettings({ label: '评论规则与表情', link: ADMIN, description: '限频、字数、Markdown、表情和 IP 属地' });
+  const manage = [requireAuth, checkPermission('advanced-comments:manage')];
+  const back = (tab: string) => `${ADMIN}?tab=${tab}`;
+
+  web.register('get', ADMIN, ...manage, route(async (req, res) => {
+    const tab = ['rules', 'text', 'single', 'album'].includes(text(req.query.tab)) ? text(req.query.tab) : 'rules';
+    res.render(`${PLUGIN_ID}/settings`, { pageTitle: '评论设置', tab, config, defaults: DEFAULT_CONFIG, store });
+  }));
+  web.register('post', `${ADMIN}/rules`, ...manage, route(async (req, res) => {
+    config = normalizeConfig({ ...config, ...parseConfigBody(req.body ?? {}) });
+    await ctx.plugins.setConfig(PLUGIN_ID, config);
+    req.flash('success', '评论规则已保存，立即生效。');
+    res.redirect(303, back('rules'));
+  }));
+
+  const saveImage = async (data: Buffer): Promise<string> => {
+    if (!data.length) throw new UploadError('图片是空的');
+    if (data.length > MAX_IMAGE) throw new UploadError('单张图片不能超过 2MB');
+    const ext = IMAGE_TYPES.find(([, test]) => test(data))?.[0];
+    if (!ext) throw new UploadError('只支持 PNG、JPG、GIF、WebP 图片');
+    const name = `${Date.now().toString(36)}-${crypto.randomBytes(5).toString('hex')}${ext}`;
+    await fs.writeFile(path.join(FILES, name), data, { flag: 'wx' });
+    return name;
   };
+  const removeFiles = async (names: string[]) => { for (const name of names) await fs.remove(path.join(FILES, path.basename(name))).catch(() => undefined); };
+  const exists = (table: string) => async (id: string) => Boolean(await db().get(`SELECT 1 AS ok FROM ${table} WHERE id = ?`, id));
+  const withFlash = (tab: string, fn: (req: import('express').Request) => Promise<string>) => route(async (req, res) => {
+    try { req.flash('success', await fn(req)); }
+    catch (error) { req.flash('danger', messageOf(error)); }
+    res.redirect(303, back(tab));
+  });
 
-  /* ----------------------------------------------------- rate limiting */
-
-  const reserveRateLimit = createRateLimiter(db);
-
-  /* ------------------------------------------- comment route override */
-
-  const commentPatterns = [
-    '/posts/:slug/comments',
-    '/posts/:first/:slug/comments',
-    '/posts/:MM/:dd/:slug/comments',
-    '/posts/:yyyy/:MM/:dd/:slug/comments',
-    '/post-:slug-page.html/comments',
-    '/post/:slug/comments'
-  ];
-
-  const renderBackToPost = async (res: Response, post: Post, error: string): Promise<void> => {
-    const site = await ctx.config.get();
-    res.redirect(`${postUrl(post, site.permalink)}?comment_error=${encodeURIComponent(error)}`);
-  };
-
-  const submitComment: RequestHandler = async (req, res) => {
+  web.register('post', `${ADMIN}/text`, ...manage, withFlash('text', async (req) => {
+    const content = text(req.body.content).slice(0, 200);
+    if (!content) throw new Error('请填写颜文字');
+    const id = await generateUniqueId('TXT', exists('ac_text_emoji'));
+    await db().run('INSERT INTO ac_text_emoji (id, name, content, created_at) VALUES (?, ?, ?, ?)', id, text(req.body.name).slice(0, 60) || content.slice(0, 20), content, utcNow());
+    await reloadEmoji();
+    return `已添加颜文字 ${content}`;
+  }));
+  web.register('post', `${ADMIN}/single`, ...manage, withFlash('single', async (req) => {
+    const form = await readMultipart(req, { maxBytes: MAX_IMAGE + 64 * 1024, maxFiles: 1, maxParts: 8 });
+    const file = form.files[0];
+    if (!file) throw new Error('请选择一张图片');
+    const name = text(form.fields.name).slice(0, 60) || path.parse(file.filename).name.slice(0, 60);
+    const saved = await saveImage(file.data);
+    const id = await generateUniqueId('SIN', exists('ac_single_emoji'));
+    await db().run('INSERT INTO ac_single_emoji (id, name, image_path, created_at) VALUES (?, ?, ?, ?)', id, name, saved, utcNow());
+    await reloadEmoji();
+    return `已添加表情「${name}」`;
+  }));
+  web.register('post', `${ADMIN}/album`, ...manage, withFlash('album', async (req) => {
+    const form = await readMultipart(req, { maxBytes: 24 * 1024 * 1024, maxFiles: 61, maxParts: 80 });
+    const name = text(form.fields.name).slice(0, 60);
+    const cover = form.files.find((file) => file.field === 'cover');
+    const images = form.files.filter((file) => file.field === 'emojis');
+    if (!name) throw new Error('请填写专辑名称');
+    if (!cover) throw new Error('请选择专辑封面');
+    if (!images.length) throw new Error('请至少选择一张表情图片');
+    const written: string[] = [];
     try {
-      const cfg = await readConfig();
-      const siteConfig = await ctx.config.get();
-      const { slug, id } = resolvePostParams(req.params as Record<string, string | undefined>, siteConfig.permalink);
-      const posts = ctx.posts;
-      const post = id ? await posts.findById(id) : await posts.findBySlug(slug ?? '');
-      if (!post || post.status !== 'published') { res.status(404).render('error', { title: '未找到', message: '文章不存在或尚未发布。' }); return; }
-
-      const body = (req.body ?? {}) as Record<string, unknown>;
-      const content = String(body.content ?? '');
-      const isGuest = !req.session.userId;
-      const clientIp = detectClientIp(req);
-
-      if (isGuest && cfg.requireName) {
-        const name = text(body.guest_name);
-        if (!name) { await renderBackToPost(res, post, '未登录用户评论时必须填写姓名。'); return; }
-      }
-      if (content.trim().length < 2) { await renderBackToPost(res, post, '评论内容过短。'); return; }
-      if (text(body.guest_name).length > 80 || String(body.guest_email ?? '').length > 160) {
-        await renderBackToPost(res, post, '姓名或邮箱过长。'); return;
-      }
-      if (content.length > 5000 || countChars(content) > cfg.maxLength) {
-        await renderBackToPost(res, post, `评论内容不能超过 ${cfg.maxLength} 字。`); return;
-      }
-      const limitError = isGuest ? await reserveRateLimit(clientIp, cfg) : null;
-      if (limitError) { await renderBackToPost(res, post, limitError); return; }
-
-      const location = await resolveLocation(clientIp, db);
-
-      const comment = await ctx.comments.create({
-        postId: post.id,
-        userId: req.session.userId,
-        guestName: isGuest ? text(body.guest_name) : undefined,
-        guestEmail: body.guest_email as string | undefined,
-        content,
-        ip: clientIp
+      const coverPath = await saveImage(cover.data); written.push(coverPath);
+      const paths: string[] = [];
+      for (const image of images) { const saved = await saveImage(image.data); written.push(saved); paths.push(saved); }
+      const albumId = await generateUniqueId('COL', exists('ac_album'));
+      const code = albumId.slice(4);
+      await db().transaction(async () => {
+        await db().run('INSERT INTO ac_album (id, name, cover_path, description, created_at) VALUES (?, ?, ?, ?, ?)', albumId, name, coverPath, text(form.fields.description).slice(0, 200) || null, utcNow());
+        for (const [index, image] of images.entries()) await db().run('INSERT INTO ac_album_emoji (id, album_id, image_path, name, position) VALUES (?, ?, ?, ?, ?)', `COL_${code}_${index + 1}`, albumId, paths[index], path.parse(image.filename).name.slice(0, 60) || `${index + 1}`, index + 1);
       });
-
-      const now = new Date().toISOString();
-      if (isGuest) {
-        await db.run('INSERT OR REPLACE INTO ac_comment_meta(comment_id,ip,location,created_at) VALUES(?,?,?,?)', comment.id, clientIp, location, now);
-        invalidateMetaCache();
-      }
-
-      const site = await ctx.config.get();
-      res.redirect(`${postUrl(post, site.permalink)}?notice=comment-pending`);
-    } catch (error) {
-      res.status(400).render('error', { title: '评论未提交', message: messageOf(error) });
-    }
-  };
-  for (const pattern of commentPatterns) web.register('post', pattern, submitComment);
-
-  // 把 redirect 携带的 comment_error 注入 res.locals，供覆盖后的 post 视图展示。
-  web.middleware((req, res, next) => { res.locals.acCommentError = String(req.query.comment_error ?? ''); next(); });
-
-  /* --------------------------------------------- site locals injection */
-
-  // 评论归属地缓存：site:locals 每请求触发，全表查询以 TTL + 写入失效控制成本。
-  const META_TTL_MS = 15_000;
-  let metaCache: { at: number; data: Record<string, { ip: string; location: string }> } | null = null;
-  const invalidateMetaCache = (): void => { metaCache = null; };
-  const loadMeta = async (): Promise<Record<string, { ip: string; location: string }>> => {
-    if (metaCache && Date.now() - metaCache.at < META_TTL_MS) return metaCache.data;
-    let data: Record<string, { ip: string; location: string }> = {};
-    try {
-      const rows = await db.all<{ comment_id: number; ip: string; location: string }>('SELECT comment_id,ip,location FROM ac_comment_meta');
-      // 隐私脱敏：前台仅展示部分 IP（IPv4 保留前两段 / IPv6 保留前两组），完整 IP 只存库不下发。
-      const maskIp = (ip: string): string => ip.replace(/^(\d{1,3}\.\d{1,3})\.\d{1,3}\.\d{1,3}$/, '$1.*.*').replace(/^([0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}):.+$/, '$1:*');
-      for (const row of rows) data[row.comment_id] = { ip: maskIp(row.ip), location: row.location };
-    } catch { data = {}; }
-    metaCache = { at: Date.now(), data };
-    return data;
-  };
-
-  hooks.on('site:locals', async (locals: Record<string, unknown>) => {
-    const cfg = await readConfig();
-    const meta = await loadMeta();
-    return {
-      ...locals,
-      advancedCommentsPartial: path.join(PLUGIN_DIR, 'views/partials/advanced-comments.ejs'),
-      acCommentError: locals.acCommentError ?? '',
-      ac: {
-        config: cfg,
-        meta,
-        renderComment: (content: string) => renderComment(content, cfg),
-        api: API_EMOJI,
-        emojiEnabled: cfg.emojiEnabled,
-        isGuest: !locals.currentUser
-      }
-    };
-  });
-
-  /* ------------------------------------------------------- admin: menu */
-
-  hooks.on('admin:menu', (menu: Array<{ title: string; link: string }>) => [
-    ...menu,
-    { title: '高级评论', link: `${ADMIN_BASE}/settings` }
-  ]);
-
-  /* ---------------------------------------------------- settings page */
-
-  const parseYes = (v: unknown): boolean => v === 'on' || v === true;
-
-  web.register('get', `${ADMIN_BASE}/settings`, requireAuth, checkPermission('advanced-comments:manage'), wrap(async (_req, res) => {
-    await readConfig();
-    res.render('admin/ac-comments-settings', {
-      title: '高级评论设置',
-      config,
-      notice: ''
-    });
-  }));
-  web.register('post', `${ADMIN_BASE}/settings`, requireAuth, checkPermission('advanced-comments:manage'), wrap(async (req, res) => {
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const next: AdvancedCommentsConfig = {
-      perMinute: Number(body.perMinute) || DEFAULT_CONFIG.perMinute,
-      perTenMinutes: Number(body.perTenMinutes) || DEFAULT_CONFIG.perTenMinutes,
-      perHour: Number(body.perHour) || DEFAULT_CONFIG.perHour,
-      rateLimitEnabled: parseYes(body.rateLimitEnabled),
-      requireName: parseYes(body.requireName),
-      maxLength: Number(body.maxLength) || DEFAULT_CONFIG.maxLength,
-      markdownEnabled: parseYes(body.markdownEnabled),
-      emojiEnabled: parseYes(body.emojiEnabled)
-    };
-    await saveConfig(normalizeConfig(next));
-    res.render('admin/ac-comments-settings', { title: '高级评论设置', config, notice: '设置已保存。' });
-  }));
-
-  /* ------------------------------------------------- emoji API (frontend) */
-
-  web.register('get', API_EMOJI, async (_req, res) => {
-    res.json({ ok: true, data: emojiStore });
-  });
-
-  /* -------------------------------------------- custom emoji admin page */
-
-  const manage: RequestHandler[] = [requireAuth, checkPermission('advanced-comments:manage')];
-  // 允许通过 registerCustomSetting 在插件卡片上暴露“自定义表情”入口。
-  ctx.admin.registerCustomSetting({ label: '自定义表情', link: EMOJI_BASE });
-
-  web.register('get', EMOJI_BASE, ...manage, async (req, res) => {
-    const tab = ['text', 'single', 'album'].includes(param(req.query.tab)) ? param(req.query.tab) : 'text';
-    const [texts, singles, albums, albumEmojis] = await Promise.all([
-      db.all<TextRow>('SELECT id,name,content FROM ac_text_emoji ORDER BY created_at'),
-      db.all<SingleRow>('SELECT id,name,image_path,created_at FROM ac_single_emoji ORDER BY created_at'),
-      db.all<AlbumRow>('SELECT id,name,cover_path,description,created_at FROM ac_album ORDER BY created_at'),
-      db.all<AlbumEmojiRow>('SELECT id,album_id,image_path,name,position FROM ac_album_emoji ORDER BY album_id,position')
-    ]);
-    const albumList = albums.map((album) => {
-      const emojis = albumEmojis
-        .filter((e) => e.album_id === album.id)
-        .sort((a, b) => a.position - b.position)
-        .map((e) => ({ ...e, url: fileUrl(e.image_path) }));
-      return { ...album, cover: fileUrl(album.cover_path), emojis };
-    });
-    res.render('admin/ac-comments-emoji', {
-      title: '自定义表情',
-      tab,
-      texts,
-      singles: singles.map((s) => ({ ...s, url: fileUrl(s.image_path) })),
-      albums: albumList,
-      notice: param(req.query.notice)
-    });
-  });
-
-  /* --- 颜文字 */
-  web.register('post', `${EMOJI_BASE}/text/add`, ...manage, wrap(async (req, res) => {
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const content = text(body.content);
-    if (!content) { res.redirect(`${EMOJI_BASE}?tab=text&notice=${encodeURIComponent('颜文字内容不能为空。')}`); return; }
-    const name = text(body.name) || content.slice(0, 20);
-    const id = await generateUniqueId('TXT', (cand) => Promise.resolve(db.get<unknown>('SELECT 1 FROM ac_text_emoji WHERE id=?', cand)).then(Boolean));
-    await db.run('INSERT INTO ac_text_emoji(id,name,content,created_at) VALUES(?,?,?,?)', id, name, content, new Date().toISOString());
+    } catch (error) { await removeFiles(written); throw error; }
     await reloadEmoji();
-    res.redirect(`${EMOJI_BASE}?tab=text&notice=已添加颜文字。`);
+    return `已添加专辑「${name}」（${images.length} 张）`;
   }));
-  web.register('post', `${EMOJI_BASE}/text/:id/delete`, ...manage, wrap(async (req, res) => {
-    await db.run('DELETE FROM ac_text_emoji WHERE id=?', param(req.params.id));
+  web.register('post', `${ADMIN}/:kind/:id/delete`, ...manage, route(async (req, res) => {
+    const id = String(req.params.id);
+    const kind = String(req.params.kind);
+    if (kind === 'text') await db().run('DELETE FROM ac_text_emoji WHERE id = ?', id);
+    else if (kind === 'single') {
+      const row = await db().get<{ image_path: string }>('SELECT image_path FROM ac_single_emoji WHERE id = ?', id);
+      await db().run('DELETE FROM ac_single_emoji WHERE id = ?', id);
+      if (row) await removeFiles([row.image_path]);
+    } else if (kind === 'album') {
+      const rows = await db().all<{ image_path: string }>('SELECT image_path FROM ac_album_emoji WHERE album_id = ?', id);
+      const album = await db().get<{ cover_path: string }>('SELECT cover_path FROM ac_album WHERE id = ?', id);
+      await db().transaction(async () => { await db().run('DELETE FROM ac_album_emoji WHERE album_id = ?', id); await db().run('DELETE FROM ac_album WHERE id = ?', id); });
+      await removeFiles([...rows.map((row) => row.image_path), ...(album ? [album.cover_path] : [])]);
+    } else return void res.status(404).end();
     await reloadEmoji();
-    res.redirect(`${EMOJI_BASE}?tab=text&notice=已删除。`);
+    req.flash('success', '已删除。已经发出的评论里，这个表情会显示为文字代码。');
+    res.redirect(303, back(kind));
   }));
 
-  /* --- 单个表情 */
-  web.register('post', `${EMOJI_BASE}/single/add`, ...manage, wrap(async (req, res) => {
-    const parsed = await parseUpload(req);
-    const file = parsed.files[0];
-    const name = text(parsed.fields.name);
-    if (!file || !file.data.length) { res.redirect(`${EMOJI_BASE}?tab=single&notice=${encodeURIComponent('请上传表情图片。')}`); return; }
-    if (!name) { res.redirect(`${EMOJI_BASE}?tab=single&notice=${encodeURIComponent('请填写表情配文。')}`); return; }
-    const filename = await saveImage(file.data, file.filename);
-    const id = await generateUniqueId('SIN', (cand) => Promise.resolve(db.get<unknown>('SELECT 1 FROM ac_single_emoji WHERE id=?', cand)).then(Boolean));
-    await db.run('INSERT INTO ac_single_emoji(id,name,image_path,created_at) VALUES(?,?,?,?)', id, name, filename, new Date().toISOString());
-    await reloadEmoji();
-    res.redirect(`${EMOJI_BASE}?tab=single&notice=已添加单个表情。`);
-  }));
-  web.register('post', `${EMOJI_BASE}/single/:id/delete`, ...manage, wrap(async (req, res) => {
-    await db.run('DELETE FROM ac_single_emoji WHERE id=?', param(req.params.id));
-    await reloadEmoji();
-    res.redirect(`${EMOJI_BASE}?tab=single&notice=已删除。`);
-  }));
-
-  /* --- 表情专辑 */
-  web.register('post', `${EMOJI_BASE}/album/add`, ...manage, wrap(async (req, res) => {
-    const parsed = await parseUpload(req);
-    const cover = parsed.files.find((f) => f.name === 'cover');
-    const name = text(parsed.fields.name);
-    const description = text(parsed.fields.description) || null;
-    const emojiFiles = parsed.files.filter((f) => f.name.startsWith('emoji_'));
-    if (!cover || !cover.data.length) { res.redirect(`${EMOJI_BASE}?tab=album&notice=${encodeURIComponent('请上传专辑封面图。')}`); return; }
-    if (!name) { res.redirect(`${EMOJI_BASE}?tab=album&notice=${encodeURIComponent('请填写专辑名称。')}`); return; }
-    if (!emojiFiles.length) { res.redirect(`${EMOJI_BASE}?tab=album&notice=${encodeURIComponent('请至少上传一张表情图片。')}`); return; }
-    // 校验每张表情都有自己的配文
-    for (const f of emojiFiles) {
-      const caption = text(parsed.fields[`caption_${f.name}`]);
-      if (!caption) { res.redirect(`${EMOJI_BASE}?tab=album&notice=${encodeURIComponent('每张表情都需要配文。')}`); return; }
-    }
-    const albumId = await generateUniqueId('COL', (cand) => Promise.resolve(db.get<unknown>('SELECT 1 FROM ac_album WHERE id=?', cand)).then(Boolean));
-    const albumCode = albumId.slice(4);
-    const coverPath = await saveImage(cover.data, cover.filename);
-    await db.run('INSERT INTO ac_album(id,name,cover_path,description,created_at) VALUES(?,?,?,?,?)', albumId, name, coverPath, description, new Date().toISOString());
-    let position = 1;
-    for (const f of emojiFiles) {
-      const caption = text(parsed.fields[`caption_${f.name}`]);
-      const imagePath = await saveImage(f.data, f.filename);
-      const emojiId = `COL_${albumCode}_${position}`;
-      await db.run('INSERT INTO ac_album_emoji(id,album_id,image_path,name,position) VALUES(?,?,?,?,?)', emojiId, albumId, imagePath, caption, position);
-      position++;
-    }
-    await reloadEmoji();
-    res.redirect(`${EMOJI_BASE}?tab=album&notice=已添加表情专辑。`);
-  }));
-  web.register('post', `${EMOJI_BASE}/album/:id/delete`, ...manage, wrap(async (req, res) => {
-    const albumId = param(req.params.id);
-    await db.run('DELETE FROM ac_album_emoji WHERE album_id=?', albumId);
-    await db.run('DELETE FROM ac_album WHERE id=?', albumId);
-    await reloadEmoji();
-    res.redirect(`${EMOJI_BASE}?tab=album&notice=已删除专辑。`);
-  }));
-
-  /* ------------------------------------------------------- maintenance */
-
-  // 定时清理：限频日志保留 2 天（窗口最长 1 小时），IP 归属地缓存上限 5000 条。
+  /* ---------- housekeeping ---------- */
   ctx.effect(() => {
     const timer = setInterval(() => {
-      void (async () => {
-        try {
-          const cutoff = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
-          await db.run('DELETE FROM ac_comment_log WHERE created_at<?', cutoff);
-          const count = await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM ac_ip_cache');
-          if (Number(count?.n ?? 0) > 5000) {
-            // Explicit primary keys work on both SQLite and MySQL (no rowid).
-            const stale = await db.all<{ ip: string }>('SELECT ip FROM ac_ip_cache ORDER BY ip LIMIT ?', Math.min(Number(count!.n) - 5000, 500));
-            if (stale.length) await db.run(`DELETE FROM ac_ip_cache WHERE ip IN (${stale.map(() => '?').join(',')})`, ...stale.map(row => row.ip));
-          }
-        } catch { /* 清理失败不影响主流程 */ }
-      })();
-    }, 60 * 60 * 1000);
+      void db().run('DELETE FROM ac_comment_log WHERE created_at < ?', new Date(Date.now() - 2 * 86400_000).toISOString()).catch(() => undefined);
+    }, 3600_000);
     timer.unref?.();
     return () => clearInterval(timer);
   });
 
   ctx.logger.info('activated');
-}
-
-
-
-/** 解析 multipart 请求体（文本字段 + 文件）。 */
-async function parseUpload(req: Request): Promise<{ fields: Record<string, string>; files: Array<{ name: string; filename: string; data: Buffer }> }> {
-  const contentType = String(req.headers['content-type'] || '');
-  const body = await readRawBody(req, MAX_UPLOAD);
-  return parseMultipart(body, contentType);
-}
-
-/** 允许上传的图片扩展名（禁止 .html/.svg 等可执行内容同源托管）。 */
-const IMAGE_EXT_WHITELIST = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
-
-/** 校验并保存上传图片，返回存储文件名。 */
-async function saveImage(data: Buffer, filename: string): Promise<string> {
-  if (!data.length) throw new Error('图片内容为空');
-  const ext = path.extname(filename).toLowerCase();
-  if (!IMAGE_EXT_WHITELIST.has(ext)) throw new Error('仅支持 PNG/JPG/GIF/WebP 图片。');
-  const name = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
-  await fs.writeFile(path.join(FILES_DIR, name), data, { flag: 'wx' });
-  return name;
 }

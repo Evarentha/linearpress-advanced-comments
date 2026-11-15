@@ -4,8 +4,8 @@
  * Lightweight Markdown-to-HTML renderer for comment content, XSS-safe by design.
  *
  * Authors:
- * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
- * worryzu <worryzu@gmail.com> @LinearTeam
+ * MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+ * worryzu <worryzu@evarentha.com> @LinearTeam
  *
  * Copyright (C) 2026 Evarentha
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -44,43 +44,40 @@ function safeUrl(url: string): string {
   return '#';
 }
 
-/** 单行内联处理：图片、链接、代码、加粗、斜体、删除线、emoji 令牌。 */
+/**
+ * One line of inline Markdown. Generated tags (emoji, images, code, links) are
+ * parked as placeholders before emphasis runs, so `_` and `*` inside URLs or
+ * attributes are never turned into <em>.
+ */
 function renderInline(raw: string, emojiUrl: EmojiUrlResolver | null): string {
-  let text = escapeHtml(raw);
-  // emoji 图像令牌 :emoji:ID
+  const parked: string[] = [];
+  const park = (html: string) => `\u0000${parked.push(html) - 1}\u0000`;
+  let text = escapeHtml(raw.replace(/\u0000/g, ''));
+  text = text.replace(/`([^`]+)`/g, (_m, code: string) => park(`<code>${code}</code>`));
   if (emojiUrl) {
     text = text.replace(/:emoji:([A-Z0-9_]+)/g, (full, id: string) => {
       const url = emojiUrl(String(id));
-      if (!url) return escapeHtml(full);
-      return `<img class="ac-emoji-img" src="${url}" alt="emoji" loading="lazy">`;
+      return url ? park(`<img class="ac-emoji-img" src="${url}" alt="表情" loading="lazy">`) : full;
     });
   }
-  // 图片 ![](url)
-  text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<img class="ac-md-img" src="$2" alt="$1" loading="lazy">');
-  // 行内代码 `code`
-  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // 链接 [text](url)：仅允许 http/https/mailto 与站内相对地址，防止 javascript:/data: XSS
-  text = text.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, label: string, url: string) => {
-    return `<a href="${safeUrl(url)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_m, alt: string, url: string) => {
+    const src = safeUrl(url);
+    return /^(https?:\/\/|\/)/i.test(src) ? park(`<img class="ac-md-img" src="${src}" alt="${alt}" loading="lazy" referrerpolicy="no-referrer">`) : alt;
   });
-  // 加粗 **text** 或 __text__
+  text = text.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, label: string, url: string) => `${park(`<a href="${safeUrl(url)}" target="_blank" rel="nofollow noopener noreferrer">`)}${label}${park('</a>')}`);
   text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-  // 斜体 *text* 或 _text_
   text = text.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
   text = text.replace(/(^|[^_\w])_([^_\n]+)_(?!_)/g, '$1<em>$2</em>');
-  // 删除线 ~~text~~
   text = text.replace(/~~([^~]+)~~/g, '<del>$1</del>');
-  return text;
+  return text.replace(/\u0000(\d+)\u0000/g, (_m, index: string) => parked[Number(index)] ?? '');
 }
 
-/** 将若干非块的连续行合并为一个段落。 */
+/** Consecutive plain lines form one paragraph; each line is rendered on its own, then joined with <br>. */
 function renderParagraph(lines: string[], emojiUrl: EmojiUrlResolver | null): string {
-  const joined = lines.map((l) => l.trim()).filter(Boolean).join('<br>');
-  if (!joined) return '';
-  return `<p>${renderInline(joined, emojiUrl)}</p>`;
+  const rendered = lines.map((line) => line.trim()).filter(Boolean).map((line) => renderInline(line, emojiUrl));
+  return rendered.length ? `<p>${rendered.join('<br>')}</p>` : '';
 }
-
 export function renderMarkdown(
   text: string,
   emojiUrl: EmojiUrlResolver | null = null
@@ -133,7 +130,8 @@ export function renderMarkdown(
     if (heading) {
       flushParagraph();
       const level = heading[1].length;
-      out.push(`<h${level}>${renderInline(heading[2], emojiUrl)}</h${level}>`);
+      // Comment headings must not compete with the page outline: render as a bold line.
+      out.push(`<p class="ac-md-heading" data-level="${level}"><strong>${renderInline(heading[2], emojiUrl)}</strong></p>`);
       i++;
       continue;
     }

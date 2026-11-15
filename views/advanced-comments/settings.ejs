@@ -1,0 +1,106 @@
+<%#
+  Advanced comments · settings page: rules, kaomoji, emoji, albums.
+
+  Authors:
+  MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+  worryzu <worryzu@evarentha.com> @LinearTeam
+
+  Copyright (C) 2026 Evarentha
+  SPDX-License-Identifier: GPL-3.0-or-later
+%><div class="stack" data-lp-plugin="advanced-comments">
+  <div class="page-header"><div><h1>评论设置</h1><p>评论的发布规则、显示方式，以及评论框里的表情。</p></div></div>
+  <nav class="tabs" aria-label="设置分类">
+    <a href="?tab=rules"<%- tab === 'rules' ? ' aria-current="page"' : '' %>>规则与显示</a>
+    <a href="?tab=text"<%- tab === 'text' ? ' aria-current="page"' : '' %>>颜文字<span class="count"><%= store.texts.length %></span></a>
+    <a href="?tab=single"<%- tab === 'single' ? ' aria-current="page"' : '' %>>表情<span class="count"><%= store.singles.length %></span></a>
+    <a href="?tab=album"<%- tab === 'album' ? ' aria-current="page"' : '' %>>表情专辑<span class="count"><%= store.albums.length %></span></a>
+  </nav>
+
+  <% if (tab === 'rules') { %>
+  <form class="stack ac-rules" method="post" action="/admin/advanced-comments/rules" data-dirty-guard>
+    <section class="card stack">
+      <h2 class="section-title">访客发评论</h2>
+      <label class="check"><input type="checkbox" name="requireName"<%= config.requireName ? ' checked' : '' %>><span>必须填写称呼</span></label>
+      <label class="check"><input type="checkbox" name="rateLimitEnabled"<%= config.rateLimitEnabled ? ' checked' : '' %> data-ac-toggle="rate"><span>限制发评论的频率<small>按 IP 计算，只对未登录的访客生效。</small></span></label>
+      <div class="form-row" data-ac-when="rate">
+        <%- include('partials/field', { form: { values: config, errors: {} }, name: 'perMinute', label: '每分钟最多', type: 'number', help: `默认 ${defaults.perMinute} 条`, attrs: 'min="1" max="100"' }) %>
+        <%- include('partials/field', { form: { values: config, errors: {} }, name: 'perTenMinutes', label: '每 10 分钟最多', type: 'number', help: `默认 ${defaults.perTenMinutes} 条`, attrs: 'min="1" max="500"' }) %>
+        <%- include('partials/field', { form: { values: config, errors: {} }, name: 'perHour', label: '每小时最多', type: 'number', help: `默认 ${defaults.perHour} 条`, attrs: 'min="1" max="1000"' }) %>
+      </div>
+    </section>
+    <section class="card stack">
+      <h2 class="section-title">内容</h2>
+      <div class="form-row">
+        <%- include('partials/field', { form: { values: config, errors: {} }, name: 'minLength', label: '最少字数', type: 'number', attrs: 'min="1" max="100"' }) %>
+        <%- include('partials/field', { form: { values: config, errors: {} }, name: 'maxLength', label: '最多字数', type: 'number', help: 'Markdown 符号也算在内。', attrs: 'min="10" max="5000"' }) %>
+      </div>
+      <label class="check"><input type="checkbox" name="markdownEnabled"<%= config.markdownEnabled ? ' checked' : '' %>><span>支持 Markdown<small>粗体、斜体、代码、链接、列表、引用。图片只允许 http(s) 地址。</small></span></label>
+      <label class="check"><input type="checkbox" name="emojiEnabled"<%= config.emojiEnabled ? ' checked' : '' %>><span>评论框显示表情按钮</span></label>
+    </section>
+    <section class="card stack">
+      <h2 class="section-title">IP 属地</h2>
+      <label class="check"><input type="checkbox" name="showLocation"<%= config.showLocation ? ' checked' : '' %>><span>在评论旁显示“IP 属地”<small>评论发出后，评论者的 IP 会发送给第三方服务 ip-api.com 查询所在省份或国家，只保存查询结果。请在隐私政策里说明。</small></span></label>
+    </section>
+    <div><button class="btn btn-primary" type="submit">保存设置</button></div>
+  </form>
+  <% } %>
+
+  <% if (tab === 'text') { %>
+  <section class="card stack">
+    <form class="ac-inline-form" method="post" action="/admin/advanced-comments/text">
+      <div class="field"><label for="ac-kaomoji">颜文字</label><input class="input" id="ac-kaomoji" name="content" required maxlength="200" placeholder="(｡･ω･｡)"></div>
+      <div class="field"><label for="ac-kaomoji-name">名称（可选）</label><input class="input" id="ac-kaomoji-name" name="name" maxlength="60" placeholder="开心"></div>
+      <button class="btn btn-primary" type="submit">添加</button>
+    </form>
+    <% if (store.texts.length) { %>
+    <ul class="ac-chips">
+      <% for (const item of store.texts) { %><li class="chip"><span><%= item.content %></span><form method="post" action="/admin/advanced-comments/text/<%= item.id %>/delete"><button class="ac-remove" type="submit" aria-label="删除 <%= item.content %>">×</button></form></li><% } %>
+    </ul>
+    <% } else { %><p class="muted">还没有颜文字。添加后会出现在评论框的“表情”面板里。</p><% } %>
+  </section>
+  <% } %>
+
+  <% if (tab === 'single') { %>
+  <section class="card stack">
+    <form class="ac-inline-form" method="post" action="/admin/advanced-comments/single" enctype="multipart/form-data">
+      <div class="field"><label for="ac-single-file">图片</label><input class="input" id="ac-single-file" type="file" name="image" accept="image/png,image/jpeg,image/gif,image/webp" required></div>
+      <div class="field"><label for="ac-single-name">名称（可选）</label><input class="input" id="ac-single-name" name="name" maxlength="60" placeholder="默认使用文件名"></div>
+      <button class="btn btn-primary" type="submit">上传</button>
+    </form>
+    <p class="help">PNG、JPG、GIF、WebP，单张不超过 2MB。</p>
+    <% if (store.singles.length) { %>
+    <ul class="ac-grid">
+      <% for (const item of store.singles) { %><li><img src="<%= item.url %>" alt="" loading="lazy"><span title="<%= item.name %>"><%= item.name %></span><form method="post" action="/admin/advanced-comments/single/<%= item.id %>/delete" data-confirm="删除表情「<%= item.name %>」？已发出的评论里它会显示为代码。" data-confirm-title="删除表情" data-confirm-text="删除" data-confirm-danger><button class="ac-remove" type="submit" aria-label="删除 <%= item.name %>">×</button></form></li><% } %>
+    </ul>
+    <% } else { %><p class="muted">还没有表情图片。</p><% } %>
+  </section>
+  <% } %>
+
+  <% if (tab === 'album') { %>
+  <section class="card stack">
+    <h2 class="section-title">新建专辑</h2>
+    <form class="stack" method="post" action="/admin/advanced-comments/album" enctype="multipart/form-data">
+      <div class="form-row">
+        <div class="field"><label class="required" for="ac-album-name">专辑名称</label><input class="input" id="ac-album-name" name="name" required maxlength="60"></div>
+        <div class="field"><label for="ac-album-desc">简介</label><input class="input" id="ac-album-desc" name="description" maxlength="200"></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label class="required" for="ac-album-cover">封面</label><input class="input" id="ac-album-cover" type="file" name="cover" accept="image/png,image/jpeg,image/gif,image/webp" required></div>
+        <div class="field"><label class="required" for="ac-album-files">表情图片</label><input class="input" id="ac-album-files" type="file" name="emojis" accept="image/png,image/jpeg,image/gif,image/webp" multiple required><p class="help">可一次选择多张（最多 60 张），文件名会作为表情名称。</p></div>
+      </div>
+      <div><button class="btn btn-primary" type="submit">创建专辑</button></div>
+    </form>
+  </section>
+  <% for (const album of store.albums) { %>
+  <section class="card stack">
+    <div class="ac-album-head">
+      <img src="<%= album.cover %>" alt="" width="40" height="40">
+      <div><strong><%= album.name %></strong><% if (album.description) { %><p class="help"><%= album.description %></p><% } %></div>
+      <span class="spacer"></span>
+      <form method="post" action="/admin/advanced-comments/album/<%= album.id %>/delete" data-confirm="专辑「<%= album.name %>」及其中 <%= album.emojis.length %> 个表情将被删除。" data-confirm-title="删除专辑" data-confirm-text="删除" data-confirm-danger><button class="btn btn-sm btn-danger" type="submit">删除专辑</button></form>
+    </div>
+    <ul class="ac-grid ac-grid-sm"><% for (const item of album.emojis) { %><li title="<%= item.name %>"><img src="<%= item.url %>" alt="<%= item.name %>" loading="lazy"></li><% } %></ul>
+  </section>
+  <% } %>
+  <% } %>
+</div>

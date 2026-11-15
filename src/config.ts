@@ -1,88 +1,79 @@
 /*
  * Advanced Comments Configuration
  *
- * Config shape, defaults, and normalization for the Advanced Comments plugin.
+ * Settings shape, defaults and normalisation.
  *
  * Authors:
- * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
- * worryzu <worryzu@gmail.com> @LinearTeam
+ * MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+ * worryzu <worryzu@evarentha.com> @LinearTeam
  *
  * Copyright (C) 2026 Evarentha
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-/**
- * Global plugin configuration defaults. Rate-limit windows and the maximum
- * comment length are adjustable from the admin settings page; normalization
- * falls back to the defaults whenever a stored or submitted value is missing
- * or invalid.
- * @since 1.0.0
- */
-
 export interface AdvancedCommentsConfig {
-  /** 未登录用户限频上限：最近 1 分钟允许的评论条数 */
+  /** Guest rate limits (comments per window per IP). */
   perMinute: number;
-  /** 最近 10 分钟允许的评论条数 */
   perTenMinutes: number;
-  /** 最近 1 小时允许的评论条数 */
   perHour: number;
-  /** 是否对未登录用户启用限频 */
   rateLimitEnabled: boolean;
-  /** 未登录用户是否必须填写姓名 */
   requireName: boolean;
-  /** 评论最大字数（含 Markdown 格式化字符） */
+  minLength: number;
   maxLength: number;
-  /** 评论是否启用 Markdown 渲染 */
   markdownEnabled: boolean;
-  /** 是否启用表情面板 */
   emojiEnabled: boolean;
+  /** Look up and show "IP 属地". Sends commenter IPs to ip-api.com, so off by default. */
+  showLocation: boolean;
 }
 
 export const DEFAULT_CONFIG: AdvancedCommentsConfig = {
-  perMinute: 1,
-  perTenMinutes: 3,
-  perHour: 5,
+  perMinute: 2,
+  perTenMinutes: 5,
+  perHour: 10,
   rateLimitEnabled: true,
   requireName: true,
-  maxLength: 300,
+  minLength: 2,
+  maxLength: 500,
   markdownEnabled: true,
-  emojiEnabled: true
+  emojiEnabled: true,
+  showLocation: false
 };
-
-export const CONFIG_KEY = 'advanced-comments';
 
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {
   const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
+  if (value === '' || value === null || value === undefined || !Number.isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, Math.round(n)));
 }
 
-/** 读取配置，缺失或非法字段回退默认值。 */
 export function normalizeConfig(raw: Partial<AdvancedCommentsConfig> | null | undefined): AdvancedCommentsConfig {
   const base = raw && typeof raw === 'object' ? raw : {};
   const bool = (value: unknown, fallback: boolean) => typeof value === 'boolean' ? value : fallback;
-  return {
+  const config: AdvancedCommentsConfig = {
     perMinute: clampInt(base.perMinute, DEFAULT_CONFIG.perMinute, 1, 100),
-    perTenMinutes: clampInt(base.perTenMinutes, DEFAULT_CONFIG.perTenMinutes, 1, 100),
+    perTenMinutes: clampInt(base.perTenMinutes, DEFAULT_CONFIG.perTenMinutes, 1, 500),
     perHour: clampInt(base.perHour, DEFAULT_CONFIG.perHour, 1, 1000),
     rateLimitEnabled: bool(base.rateLimitEnabled, DEFAULT_CONFIG.rateLimitEnabled),
     requireName: bool(base.requireName, DEFAULT_CONFIG.requireName),
-    maxLength: clampInt(base.maxLength, DEFAULT_CONFIG.maxLength, 1, 10000),
+    minLength: clampInt(base.minLength, DEFAULT_CONFIG.minLength, 1, 100),
+    maxLength: clampInt(base.maxLength, DEFAULT_CONFIG.maxLength, 10, 5000),
     markdownEnabled: bool(base.markdownEnabled, DEFAULT_CONFIG.markdownEnabled),
-    emojiEnabled: bool(base.emojiEnabled, DEFAULT_CONFIG.emojiEnabled)
+    emojiEnabled: bool(base.emojiEnabled, DEFAULT_CONFIG.emojiEnabled),
+    showLocation: bool(base.showLocation, DEFAULT_CONFIG.showLocation)
   };
+  // Wider windows can never allow fewer comments than narrower ones.
+  config.perTenMinutes = Math.max(config.perTenMinutes, config.perMinute);
+  config.perHour = Math.max(config.perHour, config.perTenMinutes);
+  config.minLength = Math.min(config.minLength, config.maxLength);
+  return config;
 }
 
-/** 从表单 body 解析配置（供设置页提交使用）。 */
+/** Read the settings form (checkboxes are absent when unchecked). */
 export function parseConfigBody(body: Record<string, unknown>): Partial<AdvancedCommentsConfig> {
+  const on = (value: unknown) => value === 'on' || value === true;
   return {
-    perMinute: clampInt(body.perMinute, DEFAULT_CONFIG.perMinute, 1, 100),
-    perTenMinutes: clampInt(body.perTenMinutes, DEFAULT_CONFIG.perTenMinutes, 1, 100),
-    perHour: clampInt(body.perHour, DEFAULT_CONFIG.perHour, 1, 1000),
-    rateLimitEnabled: body.rateLimitEnabled === 'on' || body.rateLimitEnabled === true,
-    requireName: body.requireName === 'on' || body.requireName === true,
-    maxLength: clampInt(body.maxLength, DEFAULT_CONFIG.maxLength, 1, 10000),
-    markdownEnabled: body.markdownEnabled === 'on' || body.markdownEnabled === true,
-    emojiEnabled: body.emojiEnabled === 'on' || body.emojiEnabled === true
+    perMinute: Number(body.perMinute), perTenMinutes: Number(body.perTenMinutes), perHour: Number(body.perHour),
+    rateLimitEnabled: on(body.rateLimitEnabled), requireName: on(body.requireName),
+    minLength: Number(body.minLength), maxLength: Number(body.maxLength),
+    markdownEnabled: on(body.markdownEnabled), emojiEnabled: on(body.emojiEnabled), showLocation: on(body.showLocation)
   };
 }

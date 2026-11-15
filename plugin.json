@@ -1,20 +1,22 @@
 {
   "id": "advanced-comments",
-  "name": "高级评论系统",
-  "version": "3.0.0",
-  "description": "未登录评论限频与姓名、IP 归属地展示、Markdown 评论、字数统计与快捷表情/颜文字/自定义表情面板。",
+  "name": "评论增强",
+  "version": "4.0.0",
+  "description": "评论规则（访客限频、字数、必填称呼）、Markdown 评论、表情面板（常用表情、颜文字、自定义表情和专辑），以及可选的 IP 属地显示。",
   "author": "LinearPress",
+  "icon": "评论",
   "type": "both",
   "main": "index.ts",
-  "runtime": "cordis",
-  "permissions": [
-    "advanced-comments:manage"
-  ],
+  "views": "views",
   "public": "public",
+  "settings": "/admin/advanced-comments",
   "styles": [
-    "advanced-comments.css"
+    { "file": "advanced-comments.css", "scope": "all" }
   ],
   "scripts": [
-    "advanced-comments.js"
+    { "file": "advanced-comments.js", "scope": "all" }
+  ],
+  "permissions": [
+    { "id": "advanced-comments:manage", "label": "管理评论规则与表情", "group": "互动" }
   ]
 }
