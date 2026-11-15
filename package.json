@@ -1,7 +1,7 @@
 {
   "name": "@evarentha/linearpress-advanced-comments",
-  "version": "3.0.0",
-  "description": "未登录评论限频与姓名、IP 归属地展示、Markdown 评论、字数统计与快捷表情/颜文字/自定义表情面板。",
+  "version": "4.0.0",
+  "description": "评论规则（访客限频、字数、必填称呼）、Markdown 评论、表情面板（常用表情、颜文字、自定义表情和专辑），以及可选的 IP 属地显示。",
   "type": "module",
   "main": "index.ts",
   "license": "GPL-3.0-or-later",
@@ -20,7 +20,7 @@
     "node": ">=22.0.0"
   },
   "peerDependencies": {
-    "linearpress": "^3.0.0"
+    "linearpress": "^4.0.0"
   },
   "publishConfig": {
     "access": "public"
